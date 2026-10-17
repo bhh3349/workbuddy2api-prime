@@ -59,3 +59,16 @@ func applyEnv(cfg *Config) {
 		cfg.AdminKey = v
 	}
 }
+
+// Save 把配置写回 path（0600，原子替换）。
+func Save(path string, cfg *Config) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}

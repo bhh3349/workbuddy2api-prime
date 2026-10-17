@@ -23,13 +23,24 @@ input,select{background:#0f1114;border:1px solid var(--line);color:var(--tx);bor
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2c313a;padding:8px 18px;border-radius:6px;display:none}
 .expire-soon{color:var(--warn);font-weight:600}
+#keybar{background:#2a2113;border:1px solid var(--warn);border-radius:8px;padding:10px 14px;margin-bottom:14px;display:none}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;justify-content:center;align-items:flex-start;padding-top:8vh;z-index:10}
+.modal .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;width:520px;max-width:92vw}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tabs button.ghost.on{border-color:var(--acc);color:var(--acc)}
+textarea{width:100%;min-height:90px;background:#0f1114;border:1px solid var(--line);color:var(--tx);border-radius:6px;padding:8px 10px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.biglink{font-size:15px;word-break:break-all}
+.step{color:var(--dim);font-size:12px;margin:6px 0}
 </style>
 </head>
 <body>
 <h1>workbuddy2api-prime</h1>
 <div class="sub">管理面板 · 数据每 30 秒自动刷新 <button class="ghost" onclick="loadAll()">立即刷新</button></div>
+<div id="keybar"><span>未设置管理密钥，接口将返回 401。</span>
+<input id="adminKeyInput" type="password" placeholder="输入管理密钥" size="20" style="margin:0 8px">
+<button onclick="saveAdminKey()">保存到浏览器</button></div>
 
-<h2>账号池</h2>
+<h2>账号池 <button onclick="openAddAccount()">添加账号</button></h2>
 <div class="card"><table><thead><tr>
 <th>账号</th><th>区域</th><th style="text-align:right">剩余额度</th><th>额度到期</th><th>状态</th><th style="text-align:right">连续失败</th><th style="text-align:right">EMA成本</th><th>上次选中</th>
 </tr></thead><tbody id="accounts"><tr><td colspan="8" style="color:var(--dim)">加载中…</td></tr></tbody></table></div>
@@ -64,11 +75,63 @@ input,select{background:#0f1114;border:1px solid var(--line);color:var(--tx);bor
 <tbody id="keys"><tr><td colspan="6" style="color:var(--dim)">加载中…</td></tr></tbody></table>
 </div>
 
+<div id="addAccountModal" class="modal"><div class="box">
+<h2 style="margin-top:0">添加账号</h2>
+<div class="tabs">
+<button class="ghost on" id="tabDevice" onclick="showTab('device')">浏览器授权</button>
+<button class="ghost" id="tabImport" onclick="showTab('import')">粘贴 Token</button>
+</div>
+<div id="paneDevice">
+<div class="step">1. 选择版本，点击"获取授权链接"</div>
+<div class="row"><select id="deviceRealm"><option value="cn">国内版</option><option value="global">国际版</option></select>
+<button onclick="startDevice()">获取授权链接</button></div>
+<div id="deviceLink" style="margin:10px 0"></div>
+<div class="step" id="deviceStatus" style="display:none">2. 在浏览器打开上方链接完成登录，本页自动检测（每 3 秒）…</div>
+</div>
+<div id="paneImport" style="display:none">
+<div class="step">把 access_token 等粘贴为 JSON（示例）：</div>
+<textarea id="importJson" placeholder='{"access_token":"...","refresh_token":"...","uid":"...（可选，能自动反查）","region":"cn"}'></textarea>
+<div class="row" style="margin-top:8px"><button onclick="importAccount()">导入</button></div>
+</div>
+<div class="row" style="margin-top:14px"><button class="ghost" onclick="closeAddAccount()">关闭</button></div>
+</div></div>
+
 <div id="toast"></div>
 <script>
 const $=id=>document.getElementById(id);
 function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2500)}
-async function api(path,opt){const r=await fetch(path,opt);const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j}
+function adminKey(){return localStorage.getItem('wb_admin_key')||''}
+function saveAdminKey(){const v=$('adminKeyInput').value.trim();if(!v){toast('先输入密钥');return}localStorage.setItem('wb_admin_key',v);$('keybar').style.display='none';toast('已保存');loadAll()}
+if(!adminKey()){$('keybar').style.display='block'}
+async function api(path,opt){opt=opt||{};opt.headers=Object.assign({'Authorization':'Bearer '+adminKey()},opt.headers||{});const r=await fetch(path,opt);const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j}
+// 添加账号弹窗
+let pollTimer=null;
+function openAddAccount(){$('addAccountModal').style.display='flex';showTab('device')}
+function closeAddAccount(){$('addAccountModal').style.display='none';if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
+function showTab(t){const d=t==='device';$('tabDevice').classList.toggle('on',d);$('tabImport').classList.toggle('on',!d);$('paneDevice').style.display=d?'block':'none';$('paneImport').style.display=d?'none':'block'}
+async function startDevice(){
+  try{
+    const realm=$('deviceRealm').value;
+    const j=await api('/panel/api/accounts/device/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({realm})});
+    $('deviceLink').innerHTML=`<a class="biglink" href="${esc(j.auth_url)}" target="_blank" rel="noopener">${esc(j.auth_url)}</a>`;
+    $('deviceStatus').style.display='block';
+    if(pollTimer)clearInterval(pollTimer);
+    pollTimer=setInterval(async()=>{
+      try{
+        const p=await api('/panel/api/accounts/device/poll?device_code='+encodeURIComponent(j.device_code));
+        if(p.done){clearInterval(pollTimer);pollTimer=null;toast('账号添加成功：'+(p.account.uid||p.account.id));closeAddAccount();loadAccounts()}
+      }catch(e){/* 轮询中 4xx/5xx 忽略，继续 */}
+    },3000);
+    toast('已发起授权，请在浏览器完成登录');
+  }catch(e){toast(e.message)}
+}
+async function importAccount(){
+  let body;try{body=JSON.parse($('importJson').value)}catch(e){toast('JSON 格式错误');return}
+  try{
+    const j=await api('/panel/api/accounts/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    toast('导入成功：'+(j.account.uid||j.account.id));closeAddAccount();loadAccounts();
+  }catch(e){toast(e.message)}
+}
 function dt(s){if(!s)return '—';const d=new Date(s);return d.toLocaleString('zh-CN',{hour12:false})}
 function daysLeft(s){if(!s)return '';const ms=new Date(s)-Date.now();if(ms<0)return '<span class="pill bad">已过期</span>';const d=Math.floor(ms/864e5);return d<=5?`<span class="expire-soon">剩 ${d} 天</span>`:`剩 ${d} 天`}
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}

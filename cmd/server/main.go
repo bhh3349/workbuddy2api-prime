@@ -103,7 +103,8 @@ func (o *orchestrator) recordUsage(ctx context.Context, req *protocol.ChatReques
 }
 
 // withAuth 是鉴权中间件：wbk_ 子钥匙优先，否则比对管理员 key。
-func withAuth(keys *apikeys.Store, adminKey string, next http.Handler) http.Handler {
+// adminKeyFn 用函数传入，支持向导页设置密钥后热更新。
+func withAuth(keys *apikeys.Store, adminKeyFn func() string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)
 		if token == "" {
@@ -119,7 +120,7 @@ func withAuth(keys *apikeys.Store, adminKey string, next http.Handler) http.Hand
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxAPIKey, k)))
 			return
 		}
-		if adminKey == "" || token != adminKey {
+		if adminKeyFn() == "" || token != adminKeyFn() {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
@@ -190,6 +191,7 @@ func main() {
 	mux := http.NewServeMux()
 	protocol.RegisterRoutes(mux, orch)
 	pn := panel.New(p, sched, ledger, keyStore, authStore)
+	pn.SetAdminKey(cfg.AdminKey)
 	pn.RegisterRoutes(mux)
 
 	// /healthz 公开（健康检查），其余走鉴权。
@@ -197,7 +199,15 @@ func main() {
 	root.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
-	root.Handle("/", withAuth(keyStore, cfg.AdminKey, mux))
+	// 首次运行向导：admin key 为空时，/panel/setup 走公开路由，设好即生效。
+	if pn.SetupNeeded() {
+		pn.SetupRoutes(root, func(k string) error {
+			cfg.AdminKey = k
+			pn.SetAdminKey(k)
+			return config.Save("config.json", cfg)
+		})
+	}
+	root.Handle("/", withAuth(keyStore, func() string { return cfg.AdminKey }, mux))
 
 	handler := root
 	log.Printf("workbuddy2api-prime listening on %s", cfg.ListenAddr)

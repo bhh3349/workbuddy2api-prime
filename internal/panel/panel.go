@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"workbuddy2api-prime/internal/apikeys"
@@ -30,6 +31,10 @@ type Panel struct {
 	ledger *billing.Ledger
 	keys   *apikeys.Store
 	auth   *auth.Store
+
+	mu       sync.Mutex
+	adminKey string       // 当前管理员密钥（SetAdminKey 设置，供 SetupNeeded 判断）
+	devices  *deviceStore // 进行中的设备授权会话
 }
 
 // New 创建 Panel。各参数可为 nil（对应接口返回空数据），但正常使用应全传。
@@ -47,6 +52,9 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /panel/api/keys", p.handleKeysList)
 	mux.HandleFunc("POST /panel/api/keys", p.handleKeyCreate)
 	mux.HandleFunc("DELETE /panel/api/keys/{id}", p.handleKeyDelete)
+	mux.HandleFunc("POST /panel/api/accounts/device/start", p.handleDeviceStart)
+	mux.HandleFunc("GET /panel/api/accounts/device/poll", p.handleDevicePoll)
+	mux.HandleFunc("POST /panel/api/accounts/import", p.handleAccountImport)
 }
 
 // serveIndex 返回单页 HTML。
