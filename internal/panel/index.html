@@ -1,194 +1,796 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>workbuddy2api-prime · 管理面板</title>
 <style>
-:root{--bg:#14161a;--card:#1d2026;--line:#2c313a;--tx:#dfe3e8;--dim:#8b93a1;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:20px;max-width:1200px;margin:0 auto}
-h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 8px;color:var(--dim);font-weight:600}
-.sub{color:var(--dim);font-size:12px;margin-bottom:10px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:6px}
-table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
-th{color:var(--dim);font-weight:600;font-size:12px}td.num{text-align:right;font-variant-numeric:tabular-nums}
-.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px}
-.pill.ok{background:rgba(63,185,80,.15);color:var(--ok)}.pill.warn{background:rgba(210,153,34,.15);color:var(--warn)}.pill.bad{background:rgba(248,81,73,.15);color:var(--bad)}.pill.dim{background:rgba(139,147,161,.15);color:var(--dim)}
-button{background:#2f81f7;border:0;color:#fff;border-radius:6px;padding:6px 14px;font-size:13px;cursor:pointer}
-button:hover{background:#1f6feb}button.danger{background:#3a2426;color:var(--bad)}button.danger:hover{background:#4a2c2e}
-button.ghost{background:transparent;border:1px solid var(--line);color:var(--tx)}
-input,select{background:#0f1114;border:1px solid var(--line);color:var(--tx);border-radius:6px;padding:6px 10px;font-size:13px}
-.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-.stat{display:inline-block;min-width:130px}.stat b{font-size:20px;display:block}.stat span{color:var(--dim);font-size:12px}
-.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
-#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2c313a;padding:8px 18px;border-radius:6px;display:none}
-.expire-soon{color:var(--warn);font-weight:600}
-#keybar{background:#2a2113;border:1px solid var(--warn);border-radius:8px;padding:10px 14px;margin-bottom:14px;display:none}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;justify-content:center;align-items:flex-start;padding-top:8vh;z-index:10}
-.modal .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;width:520px;max-width:92vw}
-.tabs{display:flex;gap:8px;margin-bottom:12px}
-.tabs button.ghost.on{border-color:var(--acc);color:var(--acc)}
-textarea{width:100%;min-height:90px;background:#0f1114;border:1px solid var(--line);color:var(--tx);border-radius:6px;padding:8px 10px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace}
-.biglink{font-size:15px;word-break:break-all}
-.step{color:var(--dim);font-size:12px;margin:6px 0}
+/* 设计语言：冷石墨基调仪表盘。单一强调色只给交互，语义色只给状态。
+   所有观测值等宽数字 tabular-nums 对齐。 */
+:root,[data-theme="dark"]{
+  --bg:#0f1114; --bg2:#14171c; --card:#1a1e25; --card2:#20252e;
+  --line:#2a303b; --line2:#353c49;
+  --tx:#e6e9ee; --dim:#8b93a1; --faint:#5c6470;
+  --acc:#6e9fff; --acc-dim:rgba(110,159,255,.14);
+  --ok:#3fb950; --ok-dim:rgba(63,185,80,.13);
+  --warn:#d29922; --warn-dim:rgba(210,153,34,.13);
+  --bad:#f85149; --bad-dim:rgba(248,81,73,.13);
+  --shadow:0 8px 28px rgba(0,0,0,.35);
+}
+[data-theme="light"]{
+  --bg:#f2f4f7; --bg2:#e9edf2; --card:#ffffff; --card2:#f6f8fb;
+  --line:#dfe4ea; --line2:#cdd4dd;
+  --tx:#1b1e24; --dim:#5f6b7a; --faint:#9aa4b2;
+  --acc:#2f6fed; --acc-dim:rgba(47,111,237,.10);
+  --ok:#1a7f37; --ok-dim:rgba(26,127,55,.10);
+  --warn:#9a6700; --warn-dim:rgba(154,103,0,.10);
+  --bad:#cf222e; --bad-dim:rgba(207,34,46,.10);
+  --shadow:0 8px 24px rgba(30,40,60,.10);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--tx);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  display:flex;min-height:100vh}
+.num,.mono{font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+a{color:var(--acc)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
+
+/* ---- 侧边栏 ---- */
+#sidebar{width:208px;flex:0 0 208px;background:var(--bg2);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:5}
+.brand{padding:18px 18px 12px;font-weight:700;font-size:15px;letter-spacing:.3px}
+.brand small{display:block;color:var(--dim);font-weight:400;font-size:11px;margin-top:2px}
+#nav{display:flex;flex-direction:column;gap:2px;padding:6px 10px;flex:1}
+#nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;color:var(--dim);
+  text-decoration:none;font-size:13.5px;cursor:pointer;border:1px solid transparent}
+#nav a:hover{background:var(--card);color:var(--tx)}
+#nav a.on{background:var(--acc-dim);color:var(--acc);border-color:transparent;font-weight:600}
+#nav a .ico{width:18px;text-align:center;flex:0 0 18px}
+.side-foot{padding:12px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center}
+.keydot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:0 0 8px}
+.keydot.off{background:var(--bad)}
+.side-foot .lbl{font-size:12px;color:var(--dim);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ---- 主区 ---- */
+#main{flex:1;min-width:0;padding:22px 26px 60px;max-width:1180px}
+.viewhead{display:flex;align-items:baseline;gap:12px;margin:4px 0 16px;flex-wrap:wrap}
+.viewhead h1{font-size:20px;margin:0;font-weight:700}
+.viewhead .sub{color:var(--dim);font-size:12px}
+.viewhead .sp{flex:1}
+section.view{display:none}
+section.view.on{display:block;animation:fadein .18s ease}
+@keyframes fadein{from{opacity:.4}to{opacity:1}}
+
+/* ---- 卡片 / 统计 ---- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+.card h3{margin:0 0 12px;font-size:13px;color:var(--dim);font-weight:600;letter-spacing:.4px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;position:relative;overflow:hidden}
+.kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--kc,var(--acc))}
+.kpi .v{font-size:24px;font-weight:700;line-height:1.25}
+.kpi .l{font-size:12px;color:var(--dim)}
+.kpi .s{font-size:11px;color:var(--faint)}
+
+/* ---- 表格 ---- */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{color:var(--dim);font-weight:600;font-size:12px;white-space:nowrap}
+tbody tr:hover{background:var(--card2)}
+td.num,th.num{text-align:right}
+.rowbar{display:flex;align-items:center;gap:8px}
+.mark{width:3px;align-self:stretch;border-radius:2px;background:var(--ok);flex:0 0 3px}
+tr.st-cool .mark{background:var(--warn)}tr.st-bad .mark{background:var(--bad)}tr.st-off .mark{background:var(--faint)}
+
+/* 状态 tag */
+.tag{display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:20px;font-size:12px;white-space:nowrap}
+.tag.ok{background:var(--ok-dim);color:var(--ok)}
+.tag.warn{background:var(--warn-dim);color:var(--warn)}
+.tag.bad{background:var(--bad-dim);color:var(--bad)}
+.tag.dim{background:var(--acc-dim);color:var(--dim)}
+.tag .cd{font-variant-numeric:tabular-nums;opacity:.85}
+.rsub{display:block;font-size:11px;color:var(--faint);margin-top:2px}
+
+/* 进度条 */
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;min-width:90px}
+.bar>i{display:block;height:100%;border-radius:3px;background:var(--acc);transition:width .3s}
+.bar>i.low{background:var(--warn)}.bar>i.crit{background:var(--bad)}
+
+/* ---- 按钮 / 表单 ---- */
+button{background:var(--acc);border:0;color:#fff;border-radius:7px;padding:7px 15px;font-size:13px;cursor:pointer;white-space:nowrap}
+button:hover{filter:brightness(1.1)}
+button:disabled{opacity:.5;cursor:default}
+button.ghost{background:transparent;border:1px solid var(--line2);color:var(--tx)}
+button.ghost:hover{border-color:var(--acc);color:var(--acc);filter:none}
+button.ghost.on{border-color:var(--acc);color:var(--acc);background:var(--acc-dim)}
+button.danger{background:transparent;border:1px solid var(--bad);color:var(--bad)}
+button.danger:hover{background:var(--bad-dim);filter:none}
+button.sm{padding:4px 10px;font-size:12px}
+input,select,textarea{background:var(--bg);border:1px solid var(--line2);color:var(--tx);
+  border-radius:7px;padding:7px 11px;font-size:13px}
+input:focus,select:focus,textarea:focus{border-color:var(--acc);outline:none}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.toolbar .sp{flex:1}
+.seg{display:inline-flex;background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:3px;gap:2px}
+.seg button{background:transparent;color:var(--dim);padding:5px 13px;border-radius:6px}
+.seg button.on{background:var(--card2);color:var(--acc);font-weight:600}
+
+/* ---- 到期分布条 expirybar ---- */
+.expbar{display:flex;height:26px;border-radius:6px;overflow:hidden;background:var(--bg);border:1px solid var(--line)}
+.expbar>div{height:100%;transition:width .3s}
+.exp-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--dim)}
+.exp-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
+.exp-row{display:grid;grid-template-columns:150px 1fr 110px;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.exp-row:last-child{border-bottom:0}
+.exp-row .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.exp-single{height:10px;border-radius:5px;background:var(--bg);border:1px solid var(--line);position:relative;overflow:hidden}
+.exp-single>i{position:absolute;left:0;top:0;bottom:0;border-radius:5px}
+
+/* ---- SVG 图表 ---- */
+.chart{width:100%;height:auto;display:block}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart .ylab{fill:var(--faint);font-size:10px}
+.chart .xlab{fill:var(--faint);font-size:10px}
+.chart-tip{position:absolute;pointer-events:none;background:var(--card2);border:1px solid var(--line2);
+  border-radius:6px;padding:6px 10px;font-size:12px;display:none;z-index:5;box-shadow:var(--shadow);white-space:nowrap}
+.chart-wrap{position:relative}
+
+/* ---- toast / 模态 ---- */
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--card2);
+  border:1px solid var(--line2);color:var(--tx);padding:10px 20px;border-radius:8px;display:none;z-index:60;
+  box-shadow:var(--shadow);font-size:13px;transition:transform .2s,opacity .2s}
+#toast.show{display:block;transform:translateX(-50%) translateY(0)}
+#toast.ok{border-color:var(--ok)}#toast.err{border-color:var(--bad)}
+.veil{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(3px);display:none;
+  justify-content:center;align-items:flex-start;padding:8vh 16px;z-index:50;overflow-y:auto}
+.veil.show{display:flex}
+.veil .box{background:var(--card);border:1px solid var(--line2);border-radius:12px;padding:22px;
+  width:560px;max-width:94vw;box-shadow:var(--shadow)}
+.veil .box h2{margin:0 0 4px;font-size:16px}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;font-size:13px;margin:12px 0}
+.kv dt{color:var(--dim)}.kv dd{margin:0;word-break:break-all}
+.tabs{display:flex;gap:6px;margin:12px 0}
+.empty{padding:34px 16px;text-align:center;color:var(--dim);font-size:13px}
+.empty .big{font-size:15px;color:var(--tx);margin-bottom:6px;font-weight:600}
+.copybtn{margin-left:8px}
+.biglink{font-size:14px;word-break:break-all;background:var(--bg);border:1px solid var(--line);
+  border-radius:8px;padding:10px 12px;display:block;margin:8px 0}
+.step{color:var(--dim);font-size:12.5px;margin:8px 0}
+textarea{width:100%;min-height:96px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;resize:vertical}
+
+/* 任务卡 */
+.taskgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.task{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+.task h4{margin:0 0 4px;font-size:14px}
+.task p{margin:0 0 12px;font-size:12px;color:var(--dim)}
+
+@media (max-width:760px){
+  body{flex-direction:column}
+  #sidebar{width:100%;flex:none;height:auto;position:static;border-right:0;border-bottom:1px solid var(--line)}
+  #nav{flex-direction:row;overflow-x:auto;padding:8px}
+  #nav a{white-space:nowrap}
+  .brand{padding:12px 14px 4px}.side-foot{display:none}
+  #main{padding:14px}
+  .exp-row{grid-template-columns:1fr;gap:4px}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
 </style>
 </head>
 <body>
-<h1>workbuddy2api-prime</h1>
-<div class="sub">管理面板 · 数据每 30 秒自动刷新 <button class="ghost" onclick="loadAll()">立即刷新</button></div>
-<div id="keybar"><span>未设置管理密钥，接口将返回 401。</span>
-<input id="adminKeyInput" type="password" placeholder="输入管理密钥" size="20" style="margin:0 8px">
-<button onclick="saveAdminKey()">保存到浏览器</button></div>
+<aside id="sidebar">
+  <div class="brand">workbuddy2api-prime<small>多账号网关 · 管理面板</small></div>
+  <nav id="nav">
+    <a href="#overview" data-v="overview"><span class="ico">📊</span>概览</a>
+    <a href="#accounts" data-v="accounts"><span class="ico">👥</span>账号池</a>
+    <a href="#usage" data-v="usage"><span class="ico">📈</span>用量</a>
+    <a href="#checkin" data-v="checkin"><span class="ico">✅</span>签到任务</a>
+    <a href="#keys" data-v="keys"><span class="ico">🔑</span>子钥匙</a>
+  </nav>
+  <div class="side-foot">
+    <span class="keydot off" id="keyDot"></span>
+    <span class="lbl" id="keyLbl">未设置管理密钥</span>
+    <button class="ghost sm" onclick="openKeyVeil()">密钥</button>
+    <button class="ghost sm" id="themeBtn" onclick="toggleTheme()" title="切换深色/浅色">🌓</button>
+  </div>
+</aside>
 
-<h2>账号池 <button onclick="openAddAccount()">添加账号</button></h2>
-<div class="card"><table><thead><tr>
-<th>账号</th><th>区域</th><th style="text-align:right">剩余额度</th><th>额度到期</th><th>状态</th><th style="text-align:right">连续失败</th><th style="text-align:right">EMA成本</th><th>上次选中</th>
-</tr></thead><tbody id="accounts"><tr><td colspan="8" style="color:var(--dim)">加载中…</td></tr></tbody></table></div>
+<main id="main">
+  <!-- 概览 -->
+  <section class="view" id="view-overview">
+    <div class="viewhead"><h1>概览</h1><span class="sub">网关运行状态一览 · <span id="ovUpdated"></span></span>
+      <span class="sp"></span><button class="ghost sm" onclick="refreshView()">↻ 刷新</button></div>
+    <div class="kpis" id="ovKpis"></div>
+    <div class="card"><h3>积分到期分布 <span style="font-weight:400">（颜色越深越紧急）</span></h3>
+      <div class="expbar" id="expTotal"></div>
+      <div class="exp-legend" id="expLegend"></div>
+      <div id="expRows" style="margin-top:10px"></div>
+    </div>
+    <div class="card"><h3>用量趋势 · 近24小时
+      <span class="seg" style="float:right" id="trendSeg">
+        <button class="on" data-m="req">请求数</button><button data-m="credit">消耗积分</button>
+      </span></h3>
+      <div class="chart-wrap"><svg class="chart" id="trendChart" viewBox="0 0 720 230" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="chart-tip" id="trendTip"></div></div>
+    </div>
+    <div class="card"><h3>最近请求</h3>
+      <table><thead><tr><th>时间</th><th>子钥匙</th><th>模型</th><th class="num">输入</th><th class="num">输出</th><th class="num">积分</th><th class="num">延迟</th><th>结果</th></tr></thead>
+      <tbody id="recentBody"><tr><td colspan="8" style="color:var(--dim)">加载中…</td></tr></tbody></table>
+    </div>
+  </section>
 
-<h2>用量</h2>
-<div class="card">
-<div class="row">
-<label>子钥匙 <input id="usageKey" placeholder="ID，空=全部" size="14"></label>
-<label>范围 <select id="usageHours"><option value="1">近1小时</option><option value="24" selected>近24小时</option><option value="168">近7天</option></select></label>
-<button onclick="loadUsage()">查询</button>
-</div>
-<div id="usageStats"></div>
-</div>
+  <!-- 账号池 -->
+  <section class="view" id="view-accounts">
+    <div class="viewhead"><h1>账号池</h1><span class="sub" id="accCount"></span><span class="sp"></span>
+      <input id="accSearch" placeholder="搜索 ID / UID" size="16" style="max-width:180px">
+      <button class="ghost sm" onclick="refreshView()">↻ 刷新</button>
+      <button onclick="openAddAccount()">＋ 添加账号</button></div>
+    <div class="card" style="padding:6px 10px">
+      <table><thead><tr><th></th><th>账号</th><th>状态</th><th>剩余额度</th><th>额度到期</th><th class="num">连败</th><th class="num">EMA成本</th><th>上次选中</th><th></th></tr></thead>
+      <tbody id="accBody"><tr><td colspan="9" style="color:var(--dim)">加载中…</td></tr></tbody></table>
+    </div>
+  </section>
 
-<h2>签到历史</h2>
-<div class="card"><table><thead><tr><th>时间</th><th>账号</th><th>结果</th><th>详情</th></tr></thead>
-<tbody id="checkin"><tr><td colspan="4" style="color:var(--dim)">加载中…</td></tr></tbody></table></div>
+  <!-- 用量 -->
+  <section class="view" id="view-usage">
+    <div class="viewhead"><h1>用量</h1><span class="sub">账本逐请求记录，查询时聚合</span></div>
+    <div class="card">
+      <div class="toolbar">
+        <span class="seg" id="rangeSeg">
+          <button data-h="1">近1小时</button><button data-h="24" class="on">近24小时</button><button data-h="168">近7天</button>
+        </span>
+        <label>子钥匙 <select id="usageKeySel"><option value="">全部</option></select></label>
+        <span class="sp"></span>
+        <span class="seg" id="usageSeg"><button class="on" data-m="req">请求数</button><button data-m="credit">消耗积分</button></span>
+      </div>
+      <div class="kpis" id="usageKpis" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))"></div>
+      <div class="chart-wrap"><svg class="chart" id="usageChart" viewBox="0 0 720 230" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="chart-tip" id="usageTip"></div></div>
+    </div>
+    <div class="card"><h3>分钥匙明细</h3>
+      <table><thead><tr><th>子钥匙</th><th class="num">请求数</th><th class="num">输入 token</th><th class="num">输出 token</th><th class="num">消耗积分</th></tr></thead>
+      <tbody id="usageByKey"><tr><td colspan="5" style="color:var(--dim)">加载中…</td></tr></tbody></table>
+    </div>
+  </section>
 
-<h2>定时任务</h2>
-<div class="card"><div class="row" id="tasks">
-<button onclick="runTask('checkin')">补跑签到</button>
-<button onclick="runTask('keepalive')">补跑保活</button>
-<button onclick="runTask('growth')">补跑成长任务</button>
-<span class="sub" style="margin:0">任务名以服务端注册为准，失败会在下方提示</span>
-</div></div>
+  <!-- 签到任务 -->
+  <section class="view" id="view-checkin">
+    <div class="viewhead"><h1>签到任务</h1><span class="sub">北京时间排程 · 签到 09:00/21:00 · 保活 22:00 · 成长 01:00（错峰执行）</span>
+      <span class="sp"></span><button class="ghost sm" onclick="refreshView()">↻ 刷新</button></div>
+    <div class="taskgrid" style="margin-bottom:14px">
+      <div class="task"><h4>📅 签到</h4><p>每日 09:00 / 21:00，随机延迟 2–5 秒错峰</p><button class="ghost sm" onclick="runTask('checkin')">手动补跑</button></div>
+      <div class="task"><h4>💓 保活</h4><p>每日 22:00，刷新 token 会话</p><button class="ghost sm" onclick="runTask('keepalive')">手动补跑</button></div>
+      <div class="task"><h4>🌱 成长任务</h4><p>每日 01:00，自动做任务领积分</p><button class="ghost sm" onclick="runTask('growth')">手动补跑</button></div>
+    </div>
+    <div class="card"><h3>执行历史（近 50 条）</h3>
+      <table><thead><tr><th>时间</th><th>账号</th><th>结果</th><th>详情</th></tr></thead>
+      <tbody id="checkinBody"><tr><td colspan="4" style="color:var(--dim)">加载中…</td></tr></tbody></table>
+    </div>
+  </section>
 
-<h2>子钥匙 <span class="sub">（wbk_，明文只在创建时显示一次）</span></h2>
-<div class="card">
-<div class="row"><input id="newKeyName" placeholder="钥匙名称" size="18"><button onclick="createKey()">新建</button></div>
-<div id="newKeyPlain" class="mono" style="margin-bottom:8px"></div>
-<table><thead><tr><th>ID</th><th>名称</th><th style="text-align:right">已用/配额</th><th>模型白名单</th><th>状态</th><th>操作</th></tr></thead>
-<tbody id="keys"><tr><td colspan="6" style="color:var(--dim)">加载中…</td></tr></tbody></table>
-</div>
+  <!-- 子钥匙 -->
+  <section class="view" id="view-keys">
+    <div class="viewhead"><h1>子钥匙</h1><span class="sub">wbk_ 前缀 · 明文只在创建时展示一次</span><span class="sp"></span>
+      <button class="ghost sm" onclick="refreshView()">↻ 刷新</button></div>
+    <div class="card">
+      <div class="toolbar"><input id="newKeyName" placeholder="新钥匙名称，如：给小李的 key" size="26">
+        <button onclick="createKey()">新建子钥匙</button></div>
+      <table><thead><tr><th>ID</th><th>名称</th><th>用量</th><th>模型白名单</th><th>到期</th><th>状态</th><th></th></tr></thead>
+      <tbody id="keysBody"><tr><td colspan="7" style="color:var(--dim)">加载中…</td></tr></tbody></table>
+    </div>
+  </section>
+</main>
 
-<div id="addAccountModal" class="modal"><div class="box">
-<h2 style="margin-top:0">添加账号</h2>
-<div class="tabs">
-<button class="ghost on" id="tabDevice" onclick="showTab('device')">浏览器授权</button>
-<button class="ghost" id="tabImport" onclick="showTab('import')">粘贴 Token</button>
-</div>
-<div id="paneDevice">
-<div class="step">1. 选择版本，点击"获取授权链接"</div>
-<div class="row"><select id="deviceRealm"><option value="cn">国内版</option><option value="global">国际版</option></select>
-<button onclick="startDevice()">获取授权链接</button></div>
-<div id="deviceLink" style="margin:10px 0"></div>
-<div class="step" id="deviceStatus" style="display:none">2. 在浏览器打开上方链接完成登录，本页自动检测（每 3 秒）…</div>
-</div>
-<div id="paneImport" style="display:none">
-<div class="step">把 access_token 等粘贴为 JSON（示例）：</div>
-<textarea id="importJson" placeholder='{"access_token":"...","refresh_token":"...","uid":"...（可选，能自动反查）","region":"cn"}'></textarea>
-<div class="row" style="margin-top:8px"><button onclick="importAccount()">导入</button></div>
-</div>
-<div class="row" style="margin-top:14px"><button class="ghost" onclick="closeAddAccount()">关闭</button></div>
-</div></div>
-
+<!-- 通用模态 -->
+<div class="veil" id="veil"><div class="box" id="veilBox"></div></div>
 <div id="toast"></div>
+
 <script>
+"use strict";
+/* ============ 基础 ============ */
 const $=id=>document.getElementById(id);
-function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2500)}
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtInt=n=>(n??0).toLocaleString('en-US');
+const fmt1=n=>(n??0).toFixed(1);
+
+/* ---- toast ---- */
+let toastTimer=null;
+function toast(msg,cls){
+  const t=$('toast');t.textContent=msg;t.className='show '+(cls||'');
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>{t.className=''},2600);
+}
+
+/* ---- veil 模态 ---- */
+function openVeil(html){$('veilBox').innerHTML=html;$('veil').classList.add('show')}
+function closeVeil(){$('veil').classList.remove('show')}
+$('veil').addEventListener('click',e=>{if(e.target.id==='veil')closeVeil()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeVeil()});
+
+/* ---- 主题 ---- */
+function applyTheme(){document.documentElement.dataset.theme=localStorage.getItem('wb_theme')||'dark'}
+function toggleTheme(){
+  const cur=document.documentElement.dataset.theme==='light'?'dark':'light';
+  localStorage.setItem('wb_theme',cur);applyTheme();
+}
+applyTheme();
+
+/* ---- 管理密钥 ---- */
 function adminKey(){return localStorage.getItem('wb_admin_key')||''}
-function saveAdminKey(){const v=$('adminKeyInput').value.trim();if(!v){toast('先输入密钥');return}localStorage.setItem('wb_admin_key',v);$('keybar').style.display='none';toast('已保存');loadAll()}
-if(!adminKey()){$('keybar').style.display='block'}
-async function api(path,opt){opt=opt||{};opt.headers=Object.assign({'Authorization':'Bearer '+adminKey()},opt.headers||{});const r=await fetch(path,opt);const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j}
-// 添加账号弹窗
+function refreshKeyUI(){
+  const has=!!adminKey();
+  $('keyDot').classList.toggle('off',!has);
+  $('keyLbl').textContent=has?'密钥已设置':'未设置管理密钥';
+}
+function openKeyVeil(){
+  openVeil(`<h2>管理密钥</h2><div class="step">面板所有接口都用它鉴权，保存在本浏览器 localStorage。</div>
+    <input type="password" id="vkInput" placeholder="输入管理密钥" style="width:100%;margin:8px 0" value="${esc(adminKey())}">
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+      <button class="ghost" onclick="closeVeil()">取消</button>
+      <button onclick="saveKeyVeil()">保存</button></div>`);
+  setTimeout(()=>$('vkInput').focus(),50);
+}
+function saveKeyVeil(){
+  const v=$('vkInput').value.trim();if(!v){toast('先输入密钥','err');return}
+  localStorage.setItem('wb_admin_key',v);refreshKeyUI();closeVeil();toast('密钥已保存','ok');refreshView(true);
+}
+
+/* ---- API 封装：401 自动弹密钥门 ---- */
+async function api(path,opt){
+  opt=opt||{};
+  opt.headers=Object.assign({'Authorization':'Bearer '+adminKey()},opt.headers||{});
+  let r;
+  try{r=await fetch(path,opt)}catch(e){throw new Error('网络错误：'+e.message)}
+  if(r.status===401){openKeyVeil();throw new Error('未授权：请先设置管理密钥')}
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+
+/* ---- 时间格式化 ---- */
+function dt(s){if(!s)return '—';return new Date(s).toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
+function ago(s){
+  if(!s)return '—';const ms=Date.now()-new Date(s).getTime();
+  if(ms<0)return '刚刚';const m=Math.floor(ms/6e4);
+  if(m<1)return '刚刚';if(m<60)return m+' 分钟前';
+  const h=Math.floor(m/60);if(h<24)return h+' 小时前';
+  return Math.floor(h/24)+' 天前';
+}
+/* 倒计时：未来时间 → "1h 23m" / 已过 → "" */
+function cdstr(s){
+  if(!s)return '';const ms=new Date(s).getTime()-Date.now();
+  if(ms<=0)return '';const m=Math.ceil(ms/6e4);
+  if(m<60)return m+'m';const h=Math.floor(m/60);
+  if(h<48)return h+'h '+(m%60)+'m';return Math.floor(h/24)+'d '+ (h%24)+'h';
+}
+function daysLeftNum(s){if(!s)return null;return Math.floor((new Date(s).getTime()-Date.now())/864e5)}
+
+/* 到期紧迫度：返回 {cls, label} */
+function expiryInfo(s){
+  if(!s)return{cls:'dim',label:'无期限',days:null};
+  const d=daysLeftNum(s);
+  if(d<0)return{cls:'bad',label:'已过期 '+(-d)+' 天',days:d};
+  if(d===0)return{cls:'bad',label:'今天到期',days:d};
+  if(d<=3)return{cls:'bad',label:'剩 '+d+' 天',days:d};
+  if(d<=7)return{cls:'warn',label:'剩 '+d+' 天',days:d};
+  if(d<=30)return{cls:'warn',label:'剩 '+d+' 天',days:d};
+  return{cls:'ok',label:'剩 '+d+' 天',days:d};
+}
+
+/* ---- hash 路由 ---- */
+const VIEWS=['overview','accounts','usage','checkin','keys'];
+const TITLES={overview:'概览',accounts:'账号池',usage:'用量',checkin:'签到任务',keys:'子钥匙'};
+let curView='overview';
+function route(){
+  let v=(location.hash||'#overview').slice(1);
+  if(!VIEWS.includes(v))v='overview';
+  curView=v;
+  document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
+  document.querySelectorAll('section.view').forEach(s=>s.classList.toggle('on',s.id==='view-'+v));
+  document.title=TITLES[v]+' · workbuddy2api-prime';
+  refreshView(true);
+}
+window.addEventListener('hashchange',route);
+
+/* 当前视图自动刷新（10s），倒计时每秒滴答 */
+let refTimer=null,cdTimer=null;
+function startTimers(){
+  clearInterval(refTimer);clearInterval(cdTimer);
+  refTimer=setInterval(()=>refreshView(),10000);
+  cdTimer=setInterval(tickCountdowns,1000);
+}
+function tickCountdowns(){
+  document.querySelectorAll('[data-cd]').forEach(el=>{
+    const t=cdstr(el.dataset.cd);
+    el.textContent=t?(' '+t):'';
+    if(!t)el.closest('.tag')?.classList.replace('warn','dim');
+  });
+}
+async function refreshView(force){
+  try{
+    if(curView==='overview')await vOverview();
+    else if(curView==='accounts')await vAccounts();
+    else if(curView==='usage')await vUsage();
+    else if(curView==='checkin')await vCheckin();
+    else if(curView==='keys')await vKeys();
+  }catch(e){
+    if(force||!String(e.message).includes('未授权'))toast(e.message,'err');
+  }
+}
+/* ============ 手写 SVG 图表 ============
+   x 轴用真实时间轴（桶时间戳定位），不用 preserveAspectRatio="none" 避免拉伸变形。 */
+const CH_W=720,CH_H=230,PAD_L=46,PAD_R=10,PAD_T=12,PAD_B=26;
+function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+function niceCeil(v){if(v<=0)return 1;const p=Math.pow(10,Math.floor(Math.log10(v)));const m=v/p;return (m<=1?1:m<=2?2:m<=5?5:10)*p}
+function renderArea(svg,series,getV,fmtTip){
+  const W=CH_W,H=CH_H,iw=W-PAD_L-PAD_R,ih=H-PAD_T-PAD_B;
+  const t0=+new Date(series[0].time),t1=+new Date(series[series.length-1].time);
+  const vmax=niceCeil(Math.max(...series.map(getV),1));
+  const X=t=>PAD_L+((+new Date(t)-t0)/Math.max(t1-t0,1))*iw;
+  const Y=v=>PAD_T+ih-(v/vmax)*ih;
+  let g='';
+  for(let i=0;i<=4;i++){const v=vmax*i/4,y=Y(v).toFixed(1);
+    g+=`<line class="grid" x1="${PAD_L}" y1="${y}" x2="${W-PAD_R}" y2="${y}"/><text class="ylab" x="4" y="${+y+4}">${v>=1000?(v/1000)+'k':v}</text>`}
+  // x 轴刻度：取 5 个真实时间点
+  for(let i=0;i<5;i++){const t=new Date(t0+(t1-t0)*i/4),x=X(t).toFixed(1);
+    g+=`<text class="xlab" x="${x}" y="${H-8}" text-anchor="middle">${t.toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</text>`}
+  const pts=series.map(b=>`${X(b.time).toFixed(1)},${Y(getV(b)).toFixed(1)}`).join(' ');
+  const area=`M${PAD_L},${(PAD_T+ih).toFixed(1)} L${pts.replace(/ /g,' L')} L${(W-PAD_R).toFixed(1)},${(PAD_T+ih).toFixed(1)} Z`;
+  const acc=cssVar('--acc');
+  svg.innerHTML=g+
+    `<path d="${area}" fill="${acc}" opacity="0.18"/><polyline points="${pts}" fill="none" stroke="${acc}" stroke-width="2"/>`+
+    series.map((b,i)=>`<circle class="dot" data-i="${i}" cx="${X(b.time).toFixed(1)}" cy="${Y(getV(b)).toFixed(1)}" r="7" fill="transparent"/>`).join(' ');
+  // 悬停提示
+  const tip=$(svg.id+'Tip');
+  svg.querySelectorAll('.dot').forEach(c=>{
+    c.style.cursor='pointer';
+    c.addEventListener('mousemove',e=>{
+      const b=series[+c.dataset.i];
+      tip.style.display='block';tip.innerHTML=fmtTip(b);
+      const wr=svg.parentElement.getBoundingClientRect();
+      tip.style.left=Math.min(e.clientX-wr.left+12,wr.width-170)+'px';
+      tip.style.top=(e.clientY-wr.top-10)+'px';
+    });
+    c.addEventListener('mouseleave',()=>tip.style.display='none');
+  });
+}
+function renderBars(svg,series,getV,fmtTip){
+  const W=CH_W,H=CH_H,iw=W-PAD_L-PAD_R,ih=H-PAD_T-PAD_B;
+  const t0=+new Date(series[0].time),t1=+new Date(series[series.length-1].time);
+  const vmax=niceCeil(Math.max(...series.map(getV),1));
+  const n=series.length,bw=iw/n;
+  const X=i=>PAD_L+i*bw, Y=v=>PAD_T+ih-(v/vmax)*ih;
+  const acc=cssVar('--acc'),dim=cssVar('--line2');
+  let g='';
+  for(let i=0;i<=4;i++){const v=vmax*i/4,y=Y(v).toFixed(1);
+    g+=`<line class="grid" x1="${PAD_L}" y1="${y}" x2="${W-PAD_R}" y2="${y}"/><text class="ylab" x="4" y="${+y+4}">${v>=1000?(v/1000)+'k':v}</text>`}
+  for(let i=0;i<5;i++){const t=new Date(t0+(t1-t0)*i/4);
+    g+=`<text class="xlab" x="${(PAD_L+iw*i/4).toFixed(1)}" y="${H-8}" text-anchor="middle">${t.toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</text>`}
+  g+=series.map((b,i)=>{
+    const v=getV(b),h=Math.max((v/vmax)*ih,v>0?2:0),x=X(i)+1,y=(PAD_T+ih-h).toFixed(1);
+    return `<rect class="bbar" data-i="${i}" x="${x.toFixed(1)}" y="${y}" width="${Math.max(bw-2,1).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${v>0?acc:dim}" opacity="${v>0?0.85:0.25}"/>`;
+  }).join(' ');
+  svg.innerHTML=g;
+  const tip=$(svg.id+'Tip');
+  svg.querySelectorAll('.bbar').forEach(r=>{
+    r.style.cursor='pointer';
+    r.addEventListener('mousemove',e=>{
+      const b=series[+r.dataset.i];
+      tip.style.display='block';tip.innerHTML=fmtTip(b);
+      const wr=svg.parentElement.getBoundingClientRect();
+      tip.style.left=Math.min(e.clientX-wr.left+12,wr.width-190)+'px';
+      tip.style.top=(e.clientY-wr.top-10)+'px';
+    });
+    r.addEventListener('mouseleave',()=>tip.style.display='none');
+  });
+}
+
+/* ============ 概览 ============ */
+let trendMetric='req';
+$('trendSeg').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  trendMetric=b.dataset.m;
+  $('trendSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+  vOverview();
+});
+async function vOverview(){
+  const [accounts,sum24,series,recent,keys]=await Promise.all([
+    api('/panel/api/accounts'),api('/panel/api/usage?hours=24'),
+    api('/panel/api/usage/series?hours=24&buckets=48'),
+    api('/panel/api/usage/recent?limit=20'),api('/panel/api/keys')
+  ]);
+  const now=Date.now();
+  const avail=accounts.filter(a=>!a.disabled&&!(a.cooldown_until&&new Date(a.cooldown_until)>now)).length;
+  const cool=accounts.filter(a=>a.cooldown_until&&new Date(a.cooldown_until)>now).length;
+  const kpi=(v,l,s,c)=>`<div class="kpi" style="--kc:var(--${c||'acc'})"><div class="v num">${v}</div><div class="l">${l}</div>${s?`<div class="s">${s}</div>`:''}</div>`;
+  $('ovKpis').innerHTML=
+    kpi(accounts.length,'账号总数','', 'acc')+
+    kpi(avail,'可用账号',cool?cool+' 在冷却':'','ok')+
+    kpi(cool,'冷却中','','warn')+
+    kpi(fmtInt(sum24.Requests??sum24.requests??0),'今日请求','近24小时','acc')+
+    kpi(fmt1(sum24.TotalCredit??sum24.total_credit??0),'今日消耗积分','','warn')+
+    kpi(keys.length,'子钥匙数','','dim');
+  renderExpiry(accounts);
+  const getV=trendMetric==='req'?b=>b.requests:b=>b.credit;
+  renderArea($('trendChart'),series,getV,
+    b=>`${dt(b.time)}<br>请求 <b class="num">${b.requests}</b> · 积分 <b class="num">${fmt1(b.credit)}</b>`);
+  $('recentBody').innerHTML=recent.length?recent.map(r=>`
+    <tr><td class="num">${dt(r.Time)}</td><td class="mono">${esc((r.APIKeyID||'').slice(0,14))}</td>
+    <td class="mono">${esc(r.Model||'—')}</td><td class="num">${fmtInt(r.PromptTok)}</td><td class="num">${fmtInt(r.CompTok)}</td>
+    <td class="num">${fmt1(r.Credit)}</td><td class="num">${r.LatencyMs?r.LatencyMs+'ms':'—'}</td>
+    <td>${r.OK?'<span class="tag ok">成功</span>':'<span class="tag bad">失败</span>'}</td></tr>`).join('')
+    :'<tr><td colspan="8"><div class="empty"><div class="big">还没有请求记录</div>网关收到第一笔 API 调用后，这里会实时显示</div></td></tr>';
+  $('ovUpdated').textContent='更新于 '+new Date().toLocaleTimeString('zh-CN',{hour12:false});
+}
+/* 积分到期分布：借鉴 linguo expirybar —— 按到期时间分段，越紧急颜色越深 */
+function renderExpiry(accounts){
+  const buckets=[
+    {k:'exp', label:'已过期', max:-1, color:'var(--bad)'},
+    {k:'d3',  label:'≤3天', max:3, color:'var(--bad)'},
+    {k:'d7',  label:'≤7天', max:7, color:'var(--warn)'},
+    {k:'d30', label:'≤30天', max:30, color:'var(--warn)'},
+    {k:'long',label:'长期', max:Infinity, color:'var(--ok)'},
+  ];
+  const counts={exp:0,d3:0,d7:0,d30:0,long:0};
+  accounts.forEach(a=>{
+    const d=daysLeftNum(a.credit_expires_at);
+    const k=d===null?'long':d<0?'exp':d<=3?'d3':d<=7?'d7':d<=30?'d30':'long';
+    counts[k]++;
+  });
+  const total=accounts.length||1;
+  $('expTotal').innerHTML=buckets.filter(b=>counts[b.k]>0).map(b=>
+    `<div style="width:${(counts[b.k]/total*100).toFixed(1)}%;background:${b.color}" title="${b.label}：${counts[b.k]} 个"></div>`).join('')
+    ||'<div style="width:100%;background:var(--line)"></div>';
+  $('expLegend').innerHTML=buckets.map(b=>
+    `<span><i style="background:${b.color}"></i>${b.label} <b class="num">${counts[b.k]}</b></span>`).join('');
+  $('expRows').innerHTML=accounts.length?accounts.map(a=>{
+    const info=expiryInfo(a.credit_expires_at);
+    return `<div class="exp-row">
+      <div class="who mono" title="${esc(a.uid||'')}">${esc(a.id.slice(0,12))} <span style="color:var(--faint)">${esc(a.region)}</span></div>
+      <div class="exp-single" title="剩余额度 ${a.credit_total} · ${info.label}">
+        <i style="width:${a.credit_total>0?100:0}%;background:var(--${info.cls==='dim'?'acc':info.cls});opacity:${info.days===null?0.9:info.days<0?1:Math.max(0.25,Math.min(1,info.days/30))}"></i></div>
+      <div class="num" style="color:var(--${info.cls==='dim'?'dim':info.cls})">${info.label} · <b>${fmt1(a.credit_total)}</b></div>
+    </div>`;
+  }).join(''):'<div class="empty"><div class="big">还没有绑定账号</div>点击「账号池 → 添加账号」，扫码授权即可接入</div>';
+}
+/* ============ 账号池 ============ */
+let accCache=[];
+$('accSearch').addEventListener('input',()=>renderAccounts());
+function accStatus(a){
+  const now=Date.now();
+  if(a.disabled)return{cls:'bad',tag:'停用',row:'st-off',reason:''};
+  if(a.cooldown_until&&new Date(a.cooldown_until)>now)
+    return{cls:'warn',tag:'熔断冷却',row:'st-cool',cd:a.cooldown_until,reason:'上游失败触发'};
+  if(a.degrade_until&&new Date(a.degrade_until)>now)
+    return{cls:'warn',tag:'连败降权',row:'st-cool',cd:a.degrade_until,reason:'连续失败被降权'};
+  if((a.soft_streak||0)>0)
+    return{cls:'warn',tag:'限流冷却',row:'st-cool',reason:'连续被限流 '+a.soft_streak+' 次'};
+  return{cls:'ok',tag:'可用',row:'',reason:''};
+}
+async function vAccounts(){
+  accCache=await api('/panel/api/accounts');
+  $('accCount').textContent='共 '+accCache.length+' 个账号';
+  renderAccounts();
+}
+function renderAccounts(){
+  const q=($('accSearch').value||'').toLowerCase();
+  const list=accCache.filter(a=>!q||a.id.toLowerCase().includes(q)||(a.uid||'').toLowerCase().includes(q));
+  if(!list.length){
+    $('accBody').innerHTML='<tr><td colspan="9"><div class="empty"><div class="big">'+
+      (accCache.length?'没有匹配的账号':'还没有绑定账号')+'</div>'+
+      (accCache.length?'换个关键词试试':'点击右上角「＋ 添加账号」，在浏览器完成授权即可接入')+'</div></td></tr>';
+    return;
+  }
+  $('accBody').innerHTML=list.map(a=>{
+    const st=accStatus(a),info=expiryInfo(a.credit_expires_at);
+    const cd=st.cd?`<span class="cd" data-cd="${esc(st.cd)}"></span>`:'';
+    const tip=`权重 ${a.weight??'—'} · 连续限流 ${a.soft_streak||0} 次\nEMA 成本 ${fmt1(a.ema_cost||0)}\nUID ${a.uid||'—'}`;
+    return `<tr class="${st.row}">
+      <td><span class="mark" style="display:inline-block;height:28px;vertical-align:middle"></span></td>
+      <td><span class="mono" title="${esc(a.uid||'')}">${esc(a.id.slice(0,14))}</span>
+        <span class="rsub">${esc(a.region==='cn'?'国内版':a.region==='global'?'国际版':a.region||'')}</span></td>
+      <td><span class="tag ${st.cls}">${st.tag}${cd}</span>${st.reason?`<span class="rsub">${st.reason}</span>`:''}</td>
+      <td title="${esc(tip)}"><div class="rowbar"><div class="bar" style="flex:1"><i style="width:${a.credit_total>0?100:0}%"></i></div>
+        <b class="num">${fmt1(a.credit_total)}</b></div></td>
+      <td style="color:var(--${info.cls==='dim'?'dim':info.cls})">${info.label}</td>
+      <td class="num" style="color:${a.fails>0?'var(--bad)':'var(--dim)'}">${a.fails||0}</td>
+      <td class="num">${fmt1(a.ema_cost||0)}</td>
+      <td class="num">${ago(a.last_pick)}</td>
+      <td><button class="ghost sm" onclick='openAccDetail(${JSON.stringify(a.id)})'>详情</button></td>
+    </tr>`;
+  }).join('');
+  tickCountdowns();
+}
+function openAccDetail(id){
+  const a=accCache.find(x=>x.id===id);if(!a)return;
+  const st=accStatus(a),info=expiryInfo(a.credit_expires_at);
+  openVeil(`<h2>账号详情</h2><div class="step mono">${esc(a.id)}</div>
+    <dl class="kv">
+      <dt>UID</dt><dd class="mono">${esc(a.uid||'—')}</dd>
+      <dt>区域</dt><dd>${esc(a.region||'—')}</dd>
+      <dt>状态</dt><dd><span class="tag ${st.cls}">${st.tag}</span>${st.reason?' '+esc(st.reason):''}</dd>
+      <dt>剩余额度</dt><dd class="num"><b>${fmt1(a.credit_total)}</b></dd>
+      <dt>额度到期</dt><dd>${a.credit_expires_at?dt(a.credit_expires_at)+'（'+info.label+'）':'无期限'}</dd>
+      <dt>冷却截止</dt><dd>${a.cooldown_until?dt(a.cooldown_until):'—'}</dd>
+      <dt>降权截止</dt><dd>${a.degrade_until?dt(a.degrade_until):'—'}</dd>
+      <dt>连续失败</dt><dd class="num">${a.fails||0}</dd>
+      <dt>连续限流</dt><dd class="num">${a.soft_streak||0}</dd>
+      <dt>EMA 成本</dt><dd class="num">${fmt1(a.ema_cost||0)}</dd>
+      <dt>选号权重</dt><dd class="num">${a.weight??'—'}</dd>
+      <dt>上次选中</dt><dd>${a.last_pick?ago(a.last_pick)+'（'+dt(a.last_pick)+'）':'从未'}</dd>
+    </dl>
+    <div style="display:flex;justify-content:flex-end"><button class="ghost" onclick="closeVeil()">关闭</button></div>`);
+}
+/* ---- 添加账号（设备授权 + 粘贴导入） ---- */
 let pollTimer=null;
-function openAddAccount(){$('addAccountModal').style.display='flex';showTab('device')}
-function closeAddAccount(){$('addAccountModal').style.display='none';if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
-function showTab(t){const d=t==='device';$('tabDevice').classList.toggle('on',d);$('tabImport').classList.toggle('on',!d);$('paneDevice').style.display=d?'block':'none';$('paneImport').style.display=d?'none':'block'}
+function openAddAccount(){
+  openVeil(`<h2>添加账号</h2>
+    <div class="tabs"><span class="seg"><button class="on" id="tabD" onclick="addTab('d')">浏览器授权</button><button id="tabI" onclick="addTab('i')">粘贴 Token</button></span></div>
+    <div id="paneD">
+      <div class="step">1. 选择版本，点击「获取授权链接」</div>
+      <div class="toolbar"><select id="deviceRealm"><option value="cn">国内版</option><option value="global">国际版</option></select>
+        <button onclick="startDevice()">获取授权链接</button></div>
+      <div id="deviceLink"></div>
+      <div class="step" id="deviceStatus" style="display:none">2. 在浏览器打开上方链接完成登录，本页自动检测（每 3 秒）…</div>
+    </div>
+    <div id="paneI" style="display:none">
+      <div class="step">粘贴为 JSON：{"access_token":"…","refresh_token":"…","uid":"…（可选，可自动反查）","region":"cn"}</div>
+      <textarea id="importJson" placeholder='{"access_token":"...","refresh_token":"..."}'></textarea>
+      <div class="toolbar" style="margin-top:8px"><button onclick="importAccount()">导入</button></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="ghost" onclick="closeAddAccount()">关闭</button></div>`);
+}
+function addTab(t){
+  const d=t==='d';
+  $('tabD').classList.toggle('on',d);$('tabI').classList.toggle('on',!d);
+  $('paneD').style.display=d?'block':'none';$('paneI').style.display=d?'none':'block';
+}
+function closeAddAccount(){closeVeil();if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
 async function startDevice(){
   try{
     const realm=$('deviceRealm').value;
     const j=await api('/panel/api/accounts/device/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({realm})});
-    $('deviceLink').innerHTML=`<a class="biglink" href="${esc(j.auth_url)}" target="_blank" rel="noopener">${esc(j.auth_url)}</a>`;
+    $('deviceLink').innerHTML=`<a class="biglink" href="${esc(j.auth_url)}" target="_blank" rel="noopener">${esc(j.auth_url)}</a>
+      <button class="ghost sm" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(j.auth_url)}').then(()=>toast('链接已复制','ok'))">复制链接</button>`;
     $('deviceStatus').style.display='block';
     if(pollTimer)clearInterval(pollTimer);
     pollTimer=setInterval(async()=>{
       try{
         const p=await api('/panel/api/accounts/device/poll?device_code='+encodeURIComponent(j.device_code));
-        if(p.done){clearInterval(pollTimer);pollTimer=null;toast('账号添加成功：'+(p.account.uid||p.account.id));closeAddAccount();loadAccounts()}
-      }catch(e){/* 轮询中 4xx/5xx 忽略，继续 */}
+        if(p.done){clearInterval(pollTimer);pollTimer=null;toast('账号添加成功','ok');closeAddAccount();vAccounts()}
+      }catch(e){/* 轮询中忽略，继续 */}
     },3000);
     toast('已发起授权，请在浏览器完成登录');
-  }catch(e){toast(e.message)}
+  }catch(e){toast(e.message,'err')}
 }
 async function importAccount(){
-  let body;try{body=JSON.parse($('importJson').value)}catch(e){toast('JSON 格式错误');return}
+  let body;try{body=JSON.parse($('importJson').value)}catch(e){toast('JSON 格式错误','err');return}
   try{
     const j=await api('/panel/api/accounts/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    toast('导入成功：'+(j.account.uid||j.account.id));closeAddAccount();loadAccounts();
-  }catch(e){toast(e.message)}
+    toast('导入成功','ok');closeAddAccount();vAccounts();
+  }catch(e){toast(e.message,'err')}
 }
-function dt(s){if(!s)return '—';const d=new Date(s);return d.toLocaleString('zh-CN',{hour12:false})}
-function daysLeft(s){if(!s)return '';const ms=new Date(s)-Date.now();if(ms<0)return '<span class="pill bad">已过期</span>';const d=Math.floor(ms/864e5);return d<=5?`<span class="expire-soon">剩 ${d} 天</span>`:`剩 ${d} 天`}
-function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+/* ============ 用量 ============ */
+let usageHours=24,usageMetric='req',usageKey='';
+$('rangeSeg').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  usageHours=+b.dataset.h;
+  $('rangeSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+  vUsage();
+});
+$('usageSeg').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  usageMetric=b.dataset.m;
+  $('usageSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+  vUsage();
+});
+$('usageKeySel').addEventListener('change',e=>{usageKey=e.target.value;vUsage()});
+async function vUsage(){
+  // 子钥匙下拉（只在选项变化时重建）
+  const keys=await api('/panel/api/keys');
+  const sel=$('usageKeySel'),cur=sel.value;
+  const opts='<option value="">全部</option>'+keys.map(k=>`<option value="${esc(k.id)}">${esc(k.name||k.id)}</option>`).join('');
+  if(sel.dataset.built!==opts){sel.innerHTML=opts;sel.dataset.built=opts;sel.value=cur||''}
+  const q=`key=${encodeURIComponent(usageKey)}&hours=${usageHours}`;
+  const [sum,series]=await Promise.all([
+    api('/panel/api/usage?'+q),
+    api(`/panel/api/usage/series?${q}&buckets=${Math.min(usageHours,48)}`)
+  ]);
+  const R=sum.Requests??sum.requests??0,PT=sum.PromptTokens??sum.prompt_tokens??0,
+        CT=sum.CompletionTokens??sum.completion_tokens??0,CR=sum.TotalCredit??sum.total_credit??0;
+  $('usageKpis').innerHTML=
+    `<div class="kpi"><div class="v num">${fmtInt(R)}</div><div class="l">请求数</div></div>`+
+    `<div class="kpi"><div class="v num">${fmtInt(PT)}</div><div class="l">输入 token</div></div>`+
+    `<div class="kpi"><div class="v num">${fmtInt(CT)}</div><div class="l">输出 token</div></div>`+
+    `<div class="kpi" style="--kc:var(--warn)"><div class="v num">${fmt1(CR)}</div><div class="l">消耗积分</div></div>`;
+  const getV=usageMetric==='req'?b=>b.requests:b=>b.credit;
+  renderBars($('usageChart'),series,getV,
+    b=>`${dt(b.time)}<br>请求 <b class="num">${b.requests}</b> · 积分 <b class="num">${fmt1(b.credit)}</b>`);
+  // 分钥匙明细：逐 key 查聚合
+  $('usageByKey').innerHTML='<tr><td colspan="5" style="color:var(--dim)">聚合中…</td></tr>';
+  const rows=await Promise.all(keys.map(async k=>{
+    const s=await api(`/panel/api/usage?key=${encodeURIComponent(k.id)}&hours=${usageHours}`).catch(()=>null);
+    if(!s)return null;
+    return `<tr><td><span class="mono">${esc(k.id.slice(0,16))}</span><span class="rsub">${esc(k.name||'')}</span></td>
+      <td class="num">${fmtInt(s.Requests??s.requests??0)}</td><td class="num">${fmtInt(s.PromptTokens??s.prompt_tokens??0)}</td>
+      <td class="num">${fmtInt(s.CompletionTokens??s.completion_tokens??0)}</td><td class="num">${fmt1(s.TotalCredit??s.total_credit??0)}</td></tr>`;
+  }));
+  const valid=rows.filter(Boolean);
+  $('usageByKey').innerHTML=valid.length?valid.join('')
+    :'<tr><td colspan="5"><div class="empty"><div class="big">该时段没有用量</div>换个时间范围或子钥匙试试</div></td></tr>';
+}
 
-async function loadAccounts(){
-  try{
-    const list=await api('/panel/api/accounts');
-    $('accounts').innerHTML=list.length?list.map(a=>{
-      const st=a.disabled?'<span class="pill bad">停用</span>':(a.cooldown_until&&new Date(a.cooldown_until)>new Date()?'<span class="pill warn">冷却中</span>':(a.degrade_until&&new Date(a.degrade_until)>new Date()?'<span class="pill warn">降级中</span>':'<span class="pill ok">正常</span>'));
-      return `<tr><td class="mono">${esc(a.id)}</td><td>${esc(a.region)}</td><td class="num">${a.credit_total}</td><td>${daysLeft(a.credit_expires_at)}</td><td>${st}</td><td class="num">${a.fails}</td><td class="num">${(a.ema_cost||0).toFixed(2)}</td><td>${dt(a.last_pick)}</td></tr>`;
-    }).join(''):'<tr><td colspan="8" style="color:var(--dim)">暂无账号</td></tr>';
-  }catch(e){$('accounts').innerHTML=`<tr><td colspan="8" style="color:var(--bad)">${esc(e.message)}</td></tr>`}
-}
-async function loadUsage(){
-  try{
-    const key=$('usageKey').value.trim(),hours=$('usageHours').value;
-    const s=await api(`/panel/api/usage?key=${encodeURIComponent(key)}&hours=${hours}`);
-    $('usageStats').innerHTML=`<span class="stat"><b>${s.requests??0}</b><span>请求数</span></span>
-      <span class="stat"><b>${s.prompt_tokens??0}</b><span>输入 token</span></span>
-      <span class="stat"><b>${s.completion_tokens??0}</b><span>输出 token</span></span>
-      <span class="stat"><b>${(s.total_credit??0).toFixed(1)}</b><span>消耗积分</span></span>`;
-  }catch(e){toast(e.message)}
-}
-async function loadCheckin(){
-  try{
-    const list=await api('/panel/api/checkin');
-    $('checkin').innerHTML=list.length?list.slice(0,50).map(c=>
-      `<tr><td>${dt(c.time||c.Time)}</td><td class="mono">${esc(c.account_id||c.AccountID)}</td><td>${(c.ok??c.OK)?'<span class="pill ok">成功</span>':'<span class="pill bad">失败</span>'}</td><td>${esc(c.detail||c.Detail||'')}</td></tr>`
-    ).join(''):'<tr><td colspan="4" style="color:var(--dim)">暂无记录</td></tr>';
-  }catch(e){$('checkin').innerHTML=`<tr><td colspan="4" style="color:var(--bad)">${esc(e.message)}</td></tr>`}
-}
-async function loadKeys(){
-  try{
-    const list=await api('/panel/api/keys');
-    $('keys').innerHTML=list.length?list.map(k=>{
-      const quota=k.quota<0?'不限':k.quota;
-      return `<tr><td class="mono">${esc(k.id)}</td><td>${esc(k.name)}</td><td class="num">${k.used} / ${quota}</td><td>${esc((k.models||[]).join(', ')||'全部')}</td><td>${k.disabled?'<span class="pill bad">停用</span>':'<span class="pill ok">启用</span>'}</td><td><button class="danger" onclick="delKey('${esc(k.id)}')">删除</button></td></tr>`;
-    }).join(''):'<tr><td colspan="6" style="color:var(--dim)">暂无子钥匙</td></tr>';
-  }catch(e){$('keys').innerHTML=`<tr><td colspan="6" style="color:var(--bad)">${esc(e.message)}</td></tr>`}
-}
-async function createKey(){
-  const name=$('newKeyName').value.trim();if(!name){toast('先填名称');return}
-  try{
-    const j=await api('/panel/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-    $('newKeyPlain').innerHTML='新建成功，明文只显示一次：<b>'+esc(j.plain)+'</b>';
-    $('newKeyName').value='';loadKeys();toast('子钥匙已创建');
-  }catch(e){toast(e.message)}
-}
-async function delKey(id){
-  if(!confirm('删除子钥匙 '+id+'？'))return;
-  try{await api('/panel/api/keys/'+encodeURIComponent(id),{method:'DELETE'});loadKeys();toast('已删除')}catch(e){toast(e.message)}
+/* ============ 签到任务 ============ */
+const TASK_META={checkin:['📅 签到','每日 09:00 / 21:00'],keepalive:['💓 保活','每日 22:00'],growth:['🌱 成长任务','每日 01:00']};
+async function vCheckin(){
+  const list=await api('/panel/api/checkin');
+  $('checkinBody').innerHTML=list.length?list.slice(0,50).map(c=>{
+    const ok=c.ok??c.OK;
+    return `<tr><td class="num">${dt(c.time||c.Time)}</td><td class="mono">${esc(c.account_id||c.AccountID||'—')}</td>
+      <td>${ok?'<span class="tag ok">成功</span>':'<span class="tag bad">失败</span>'}</td>
+      <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis">${esc(c.detail||c.Detail||'')}</td></tr>`;
+  }).join(''):'<tr><td colspan="4"><div class="empty"><div class="big">暂无执行记录</div>定时任务到点会自动跑，也可以点上方「手动补跑」</div></td></tr>';
 }
 async function runTask(name){
-  try{await api('/panel/api/tasks/'+encodeURIComponent(name)+'/run',{method:'POST'});toast('任务已触发：'+name)}catch(e){toast(e.message)}
+  const meta=TASK_META[name]||[name,''];
+  if(!confirm(`手动补跑「${meta[0]}」？会真实调用上游接口。`))return;
+  try{await api('/panel/api/tasks/'+encodeURIComponent(name)+'/run',{method:'POST'});toast('任务已触发：'+name,'ok')}
+  catch(e){toast(e.message,'err')}
 }
-function loadAll(){loadAccounts();loadUsage();loadCheckin();loadKeys()}
-loadAll();setInterval(loadAll,30000);
+
+/* ============ 子钥匙 ============ */
+async function vKeys(){
+  const list=await api('/panel/api/keys');
+  if(!list.length){
+    $('keysBody').innerHTML='<tr><td colspan="7"><div class="empty"><div class="big">还没有子钥匙</div>'+
+      '在上方输入名称点「新建子钥匙」，明文只显示一次，复制后分发给调用方</div></td></tr>';
+    return;
+  }
+  $('keysBody').innerHTML=list.map(k=>{
+    const pct=k.quota>0?Math.min(100,k.used/k.quota*100):0;
+    const info=expiryInfo(k.expires_at);
+    return `<tr>
+      <td class="mono">${esc(k.id.slice(0,18))}</td><td>${esc(k.name||'—')}</td>
+      <td><div class="rowbar"><div class="bar" style="flex:1;min-width:70px"><i style="width:${pct}%" class="${pct>90?'crit':pct>70?'low':''}"></i></div>
+        <span class="num">${fmt1(k.used)}${k.quota>0?' / '+fmt1(k.quota):' / 不限'}</span></div></td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc((k.models||[]).join(', '))}">${esc((k.models||[]).join(', ')||'全部模型')}</td>
+      <td style="color:var(--${info.cls==='dim'?'dim':info.cls})">${info.label}</td>
+      <td>${k.disabled?'<span class="tag bad">停用</span>':'<span class="tag ok">启用</span>'}</td>
+      <td><button class="danger sm" onclick="delKey('${esc(k.id)}')">删除</button></td></tr>`;
+  }).join('');
+}
+async function createKey(){
+  const name=$('newKeyName').value.trim();if(!name){toast('先填钥匙名称','err');return}
+  try{
+    const j=await api('/panel/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    $('newKeyName').value='';vKeys();
+    // 明文只展示一次（学 panel-plus）：弹窗 + 复制按钮
+    openVeil(`<h2>子钥匙已创建</h2>
+      <div class="step">明文只显示这一次，请立即复制并妥善分发给调用方，关闭后无法再查看。</div>
+      <div class="biglink mono" id="plainKey">${esc(j.plain)}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="ghost" onclick="copyPlain()">复制</button>
+        <button onclick="closeVeil()">我已保存，关闭</button></div>`);
+    toast('子钥匙已创建','ok');
+  }catch(e){toast(e.message,'err')}
+}
+function copyPlain(){
+  const t=$('plainKey').textContent;
+  if(navigator.clipboard)navigator.clipboard.writeText(t).then(()=>toast('已复制到剪贴板','ok'),()=>toast('复制失败，请手动复制','err'));
+  else toast('请手动复制','err');
+}
+async function delKey(id){
+  if(!confirm('删除子钥匙 '+id+'？\n删除后该钥匙立即失效，无法恢复。'))return;
+  try{await api('/panel/api/keys/'+encodeURIComponent(id),{method:'DELETE'});vKeys();toast('已删除','ok')}
+  catch(e){toast(e.message,'err')}
+}
+
+/* ============ 启动 ============ */
+refreshKeyUI();
+route();
+startTimers();
 </script>
 </body>
 </html>

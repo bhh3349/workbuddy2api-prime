@@ -47,6 +47,8 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /panel/", p.serveIndex)
 	mux.HandleFunc("GET /panel/api/accounts", p.handleAccounts)
 	mux.HandleFunc("GET /panel/api/usage", p.handleUsage)
+	mux.HandleFunc("GET /panel/api/usage/series", p.handleUsageSeries)
+	mux.HandleFunc("GET /panel/api/usage/recent", p.handleUsageRecent)
 	mux.HandleFunc("GET /panel/api/checkin", p.handleCheckin)
 	mux.HandleFunc("POST /panel/api/tasks/{name}/run", p.handleTaskRun)
 	mux.HandleFunc("GET /panel/api/keys", p.handleKeysList)
@@ -145,6 +147,54 @@ func (p *Panel) handleUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, sum)
+}
+
+// handleUsageSeries 返回用量时间序列。参数：key、hours（默认24）、buckets（默认24）。
+// 桶时间戳是真实时间轴，供前端 SVG 趋势图按时间定位（不断档失真）。
+func (p *Panel) handleUsageSeries(w http.ResponseWriter, r *http.Request) {
+	if p.ledger == nil {
+		writeJSON(w, []billing.Bucket{})
+		return
+	}
+	q := r.URL.Query()
+	hours := 24
+	if h := q.Get("hours"); h != "" {
+		if n, err := strconv.Atoi(h); err == nil && n > 0 && n <= 24*30 {
+			hours = n
+		}
+	}
+	buckets := 24
+	if b := q.Get("buckets"); b != "" {
+		if n, err := strconv.Atoi(b); err == nil && n > 0 && n <= 240 {
+			buckets = n
+		}
+	}
+	series, err := p.ledger.BucketSeries(q.Get("key"), time.Now().Add(-time.Duration(hours)*time.Hour), buckets)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "查询用量序列失败: "+err.Error())
+		return
+	}
+	writeJSON(w, series)
+}
+
+// handleUsageRecent 返回最近的用量记录（新→旧）。参数：key、limit（默认50，上限200）。
+func (p *Panel) handleUsageRecent(w http.ResponseWriter, r *http.Request) {
+	if p.ledger == nil {
+		writeJSON(w, []types.UsageRecord{})
+		return
+	}
+	limit := 50
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	recs, err := p.ledger.Recent(r.URL.Query().Get("key"), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "查询最近请求失败: "+err.Error())
+		return
+	}
+	writeJSON(w, recs)
 }
 
 // handleCheckin 返回签到历史（只读，不触发上游请求）。

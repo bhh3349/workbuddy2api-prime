@@ -73,6 +73,110 @@ func (l *Ledger) Record(r types.UsageRecord) error {
 	return nil
 }
 
+// Bucket 是时间序列的一个桶：桶起始时间 + 该桶内的请求数与消耗积分。
+type Bucket struct {
+	Time     time.Time `json:"time"`
+	Requests int       `json:"requests"`
+	Credit   float64   `json:"credit"`
+}
+
+// BucketSeries 按时间把 [since, now] 切成 buckets 个等宽桶，返回每桶聚合。
+// 用于面板手写 SVG 趋势图（x 轴真实时间轴）。buckets<=0 时默认 24。
+func (l *Ledger) BucketSeries(apiKeyID string, since time.Time, buckets int) ([]Bucket, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if buckets <= 0 {
+		buckets = 24
+	}
+	now := time.Now()
+	if since.IsZero() || !since.Before(now) {
+		since = now.Add(-24 * time.Hour)
+	}
+	out := make([]Bucket, buckets)
+	width := now.Sub(since) / time.Duration(buckets)
+	for i := range out {
+		out[i].Time = since.Add(time.Duration(i) * width)
+	}
+
+	f, err := os.Open(l.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil // 还没记过账，返回全零序列而非报错
+		}
+		return nil, fmt.Errorf("billing: 打开账本文件失败: %w", err)
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		var r types.UsageRecord
+		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
+			continue
+		}
+		if apiKeyID != "" && r.APIKeyID != apiKeyID {
+			continue
+		}
+		if r.Time.Before(since) || !r.Time.Before(now) {
+			continue
+		}
+		idx := int(r.Time.Sub(since) / width)
+		if idx >= buckets {
+			idx = buckets - 1
+		}
+		out[idx].Requests++
+		out[idx].Credit += r.Credit
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("billing: 读取账本失败: %w", err)
+	}
+	return out, nil
+}
+
+// Recent 返回最新的 limit 条用量记录（新→旧）。用于面板"最近请求"。
+func (l *Ledger) Recent(apiKeyID string, limit int) ([]types.UsageRecord, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if limit <= 0 {
+		limit = 50
+	}
+	out := []types.UsageRecord{}
+	f, err := os.Open(l.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, fmt.Errorf("billing: 打开账本文件失败: %w", err)
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		var r types.UsageRecord
+		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
+			continue
+		}
+		if apiKeyID != "" && r.APIKeyID != apiKeyID {
+			continue
+		}
+		out = append(out, r)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("billing: 读取账本失败: %w", err)
+	}
+	// 取最后 limit 条并反转为新→旧
+	if len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
 // Query 按 API Key 与起始时间聚合用量。
 // apiKeyID 为空表示统计全部 key；since 为零值表示不限起始时间。
 func (l *Ledger) Query(apiKeyID string, since time.Time) (Summary, error) {
