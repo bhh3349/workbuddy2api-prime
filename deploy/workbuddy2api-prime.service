@@ -1,0 +1,24 @@
+[Unit]
+Description=workbuddy2api-prime gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wbprime
+Group=wbprime
+WorkingDirectory=/opt/wbprime
+ExecStart=/opt/wbprime/workbuddy2api-prime
+# 管理密钥也可以写进 EnvironmentFile=/opt/wbprime/.env（WB2API_ADMIN_KEY=xxx）
+Environment=WB2API_ADMIN_KEY=change-me
+Restart=always
+RestartSec=5
+
+# 加固：只允许写自己的工作目录
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/wbprime
+
+[Install]
+WantedBy=multi-user.target
