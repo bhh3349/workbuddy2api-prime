@@ -35,14 +35,20 @@
 ✅ Phase 3 完成：`panel` Web 管理面板（单页 embed、账号池可视化、用量、签到历史+手动补跑、子钥匙管理，5 测试）
 ⏳ 已知 TODO：客户端流式透传、上游 usage 真实积分字段对接、本机断网识别、签到/成长任务真实接口调用
 
-## 运行
+## 运行（纯 Web 操作，无需命令行）
 
 ```bash
-# 首次运行会生成 config.json（或手动创建）
-WB2API_ADMIN_KEY=你的管理密钥 go run ./cmd/server
-# 面板：http://localhost:8788/panel/ （用管理密钥鉴权）
-# API：http://localhost:8788/v1/chat/completions
+docker compose -f deploy/docker/docker-compose.yml up -d --build
+# 或：go run ./cmd/server
 ```
+
+1. 浏览器打开 http://服务器IP:8788/panel/setup → 网页上设置管理密钥（只需一次）
+2. 进面板点「添加账号」→ 显示授权链接，手机/电脑上完成授权 → 账号自动入库
+   （备选：「粘贴 Token」直接导入 access_token/refresh_token）
+3. API 地址：http://服务器IP:8788/v1/chat/completions（OpenAI 兼容）
+
+日常运维（看板、子钥匙、签到补跑、用量）全部在 /panel/ 完成。
+
 
 ## 构建
 
