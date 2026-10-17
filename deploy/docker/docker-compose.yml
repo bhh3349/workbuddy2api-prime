@@ -1,0 +1,19 @@
+services:
+  wbprime:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: workbuddy2api-prime:latest
+    container_name: wbprime
+    restart: unless-stopped
+    # 只绑本地，回源给 Caddy/Nginx 做 TLS
+    ports:
+      - "127.0.0.1:8788:8788"
+    environment:
+      # 管理密钥（二选一：这里或 config.json）
+      - WB2API_ADMIN_KEY=${WB2API_ADMIN_KEY:?请设置环境变量 WB2API_ADMIN_KEY}
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./auths:/app/auths
+      - ./data:/app/data
+      - ./config.docker.json:/app/config.json:ro
