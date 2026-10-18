@@ -186,6 +186,7 @@ func main() {
 	}
 	sched.SetBilling(upstream.NewBilling(), authStore.Save)
 	sched.SetModelDir(upstream.NewModelDirClient(), cfg.DataDir)
+	sched.SetGrowth(upstream.NewGrowth()) // 成长任务引擎上游客户端
 	sched.RegisterBuiltinTasks()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -602,6 +602,15 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
       <li><a href="#usage" data-view="usage">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 13.5h12"/><path d="M4.5 13.5V8.2M8 13.5V3.5M11.5 13.5v-3"/></svg>
         用量</a></li>
+      <li><a href="#checkin" data-view="checkin">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M5.5 1.8v2.4M10.5 1.8v2.4"/><path d="M6.2 10.3l1.3 1.3 2.4-2.7"/></svg>
+        签到任务</a></li>
+      <li><a href="#tasks" data-view="tasks">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M5.5 8.2l1.8 1.8 3.4-3.8"/></svg>
+        任务中心</a></li>
+      <li><a href="#keys" data-view="keys">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="5.3" cy="8" r="2.7"/><path d="M8 8h6M12 8v2.4M14 8v1.7"/></svg>
+        子钥匙</a></li>
       <li><a href="#packages" data-view="packages">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.2 5.4 8 2.5l5.8 2.9v5.2L8 13.5l-5.8-2.9z"/><path d="M2.2 5.4 8 8.3l5.8-2.9M8 8.3v5.2"/></svg>
         积分构成</a></li>
@@ -831,6 +840,99 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
         </div>
       </div>
     </section>
+
+    <!-- 签到任务 -->
+    <section class="view" id="view-checkin" hidden>
+      <div class="box">
+        <header>
+          <h3>定时任务 <span class="hint">北京时间排程</span></h3>
+        </header>
+        <div class="kpis k4">
+          <div class="kpi"><div class="v">签到</div><div class="l">每日 09:00 / 21:00 · 错峰 2–5 秒</div><div style="margin-top:10px"><button class="xs" data-taskrun="checkin">手动补跑</button></div></div>
+          <div class="kpi"><div class="v">保活</div><div class="l">每日 22:00 · 刷新 token 会话</div><div style="margin-top:10px"><button class="xs" data-taskrun="keepalive">手动补跑</button></div></div>
+          <div class="kpi"><div class="v">成长任务</div><div class="l">每日 01:00 · 自动做任务领积分</div><div style="margin-top:10px"><button class="xs" data-taskrun="growth">手动补跑</button></div></div>
+        </div>
+      </div>
+      <div class="box">
+        <header>
+          <h3>执行历史</h3>
+          <span class="grow"></span>
+          <span class="note" id="ckNote">—</span>
+          <button class="xs" id="btnCheckin">刷新</button>
+        </header>
+        <div class="tbl-wrap">
+        <table class="acc">
+          <thead><tr><th class="mark" aria-hidden="true"></th><th>时间</th><th>账号</th><th>结果</th><th>详情</th></tr></thead>
+          <tbody id="ckBody"></tbody>
+        </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 任务中心 -->
+    <section class="view" id="view-tasks" hidden>
+      <div class="box">
+        <header>
+          <h3>成长任务队列 <span class="hint" id="qcSummary"></span></h3>
+          <span class="grow"></span>
+          <label class="sel-note">并发
+            <select id="qcConc"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select>
+          </label>
+          <button class="xs" id="btnScanAll">扫描待办</button>
+          <button class="xs primary" id="btnRunQueue">执行全部待办</button>
+        </header>
+        <div class="qprog" id="qProg" hidden>
+          <div class="qbar"><i id="qBarFill"></i></div>
+          <span class="note" id="qProgText"></span>
+        </div>
+        <div class="tc-empty" id="tcEmpty">
+          <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="8" y="6" width="24" height="36" rx="3"/>
+            <path d="M14 16h12M14 24h12M14 32h7" opacity=".45"/>
+            <circle cx="35" cy="33" r="8"/><path d="m40 38 5 5"/>
+          </svg>
+          <div class="t">还没有扫描过</div>
+          <div class="d">扫描所有账号的成长任务待办，把没做的排成一列，一键执行。每天 01:00 会自动跑一轮。</div>
+        </div>
+        <div id="qcList"></div>
+      </div>
+    </section>
+
+    <!-- 子钥匙 -->
+    <section class="view" id="view-keys" hidden>
+      <div class="box">
+        <header>
+          <h3>子钥匙 <span class="hint">wbk_ 前缀 · 明文只在创建时展示一次</span></h3>
+          <span class="grow"></span>
+          <input id="keyName" type="text" placeholder="新钥匙名称，如：给小李的 key" aria-label="新钥匙名称" style="width:220px">
+          <button class="xs primary" id="btnKeyCreate">新建子钥匙</button>
+          <button class="xs" id="btnKeys">刷新</button>
+        </header>
+        <div class="tbl-wrap">
+        <table class="acc">
+          <thead><tr><th class="mark" aria-hidden="true"></th><th>ID</th><th>名称</th><th>用量</th><th>模型白名单</th><th>到期</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="keysBody"></tbody>
+        </table>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="veil" id="plainVeil">
+  <div class="dlg" style="width:560px">
+    <header>
+      <h3>子钥匙已创建</h3>
+    </header>
+    <div class="body">
+      <div class="state">明文只显示这一次，请立即复制并妥善分发给调用方，关闭后无法再查看。</div>
+      <div class="url" id="plainKey" style="user-select:all;word-break:break-all"></div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button id="btnCopyPlain">复制</button>
+      <button class="primary" id="btnClosePlain">我已保存，关闭</button>
+    </footer>
   </div>
 </div>
 

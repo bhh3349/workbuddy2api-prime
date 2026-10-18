@@ -75,6 +75,22 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	// 模型目录：读缓存展示 + 手动立即刷新（定时任务每天 03:00 自动抓取）
 	mux.HandleFunc("GET /panel/api/models", p.handleModels)
 	mux.HandleFunc("POST /panel/api/models/refresh", p.handleModelsRefresh)
+
+	// 成长任务（任务中心后端 API）
+	mux.HandleFunc("GET /panel/api/growth/overview", p.handleGrowthOverview)
+	mux.HandleFunc("POST /panel/api/growth/scan", p.handleGrowthScan)
+	mux.HandleFunc("POST /panel/api/growth/run", p.handleGrowthRun)
+	mux.HandleFunc("GET /panel/api/growth/queue", p.handleGrowthQueue)
+	// 任务中心：队列扫描/执行 + 单账号任务操作（对齐前端调用点）
+	mux.HandleFunc("POST /panel/api/tasks/scan_all", p.handleTasksScanAll)
+	mux.HandleFunc("POST /panel/api/tasks/run_queue", p.handleTasksRunQueue)
+	mux.HandleFunc("GET /panel/api/tasks/queue", p.handleTasksQueue)
+	mux.HandleFunc("GET /panel/api/accounts/{uid}/tasks", p.handleAccountTasks)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/tasks/accept", p.handleAccountTasksAccept)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/tasks/accept_all", p.handleAccountTasksAcceptAll)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/tasks/claim", p.handleAccountTasksClaim)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/tasks/auto", p.handleAccountTasksAuto)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/tasks/auto_all", p.handleAccountTasksAutoAll)
 }
 
 // serveIndex 返回单页 HTML。

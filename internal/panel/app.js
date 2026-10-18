@@ -481,7 +481,7 @@ let lastPackagesAt = 0;
 let expFetching = false;                       // 到期卡片在途标记（防重复打上游）
 const EXP_FRESH_MS = 2 * 60 * 1000;            // 缓存新鲜窗口：2 分钟内复用
 
-const TITLES = { accounts: '账号池', usage: '用量', packages: '积分构成', models: '模型目录' }; // prime 隐藏：任务中心/配置/运行日志
+const TITLES = { accounts: '账号池', usage: '用量', checkin: '签到任务', tasks: '任务中心', keys: '子钥匙', packages: '积分构成', models: '模型目录' }; // prime 隐藏：配置/运行日志
 function go(v) {
   view = v;
   document.querySelectorAll('.view').forEach(s => s.hidden = s.id !== 'view-' + v);
@@ -490,6 +490,9 @@ function go(v) {
   if (v === 'usage') loadUsage();
   if (v === 'packages') loadPackages();
   if (v === 'models') loadModels();
+  if (v === 'checkin') loadCheckin();
+  if (v === 'keys') loadKeys();
+  if (v === 'tasks') reattachQueueView();
   // 到期提醒卡片：默认可见，进页面即用 overview 快照渲染（零上游请求，随首页统计
   // 每轮刷新）。不再「打开账号池就打上游」——逐账号实时查在账号多时会卡死面板。
   // 完整逐包明细由卡片上的「检查」按钮显式触发（loadPackages/loadExpiry）。
@@ -3071,3 +3074,111 @@ if ($('btnExp')) $('btnExp').onclick = () => loadExpiry(true);
 
 // 「刷新」始终实时查（显式 force，不依赖事件对象真值）
 if ($('btnPk')) $('btnPk').onclick = () => loadPackages(true);
+
+/* ── 签到任务（prime 原生接口）─────────────────────────────────────────
+   三个定时任务：签到 09:00/21:00、保活 22:00、成长任务 01:00（北京时间）。
+   手动补跑调 POST /panel/api/tasks/{name}/run；执行历史调 GET /panel/api/checkin。 */
+// fmtNum 小数格式化（积分/配额展示用，保留 1 位）
+function fmtNum(n) { return (Number(n) || 0).toFixed(1); }
+const TASK_META = {
+  checkin: ['签到', '每日 09:00 / 21:00'],
+  keepalive: ['保活', '每日 22:00'],
+  growth: ['成长任务', '每日 01:00'],
+};
+async function runTask(name) {
+  const meta = TASK_META[name] || [name, ''];
+  if (!confirm('手动补跑「' + meta[0] + '」（' + meta[1] + '）？\n会真实调用上游接口。')) return;
+  try {
+    await api('tasks/' + encodeURIComponent(name) + '/run', { method: 'POST' });
+    toast('任务已触发：' + meta[0] + '，结果稍后见执行历史', 'ok');
+    loadCheckin();
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function loadCheckin() {
+  const tb = $('ckBody');
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="5"><div class="empty">读取中…</div></td></tr>';
+  try {
+    // 后端返回 types.CheckinResult 数组：{Time, AccountID, OK, Detail}
+    const list = await api('checkin');
+    if (!list.length) {
+      tb.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="big">暂无执行记录</div>定时任务到点会自动跑，也可以在上方手动补跑</div></td></tr>';
+      $('ckNote').textContent = '—';
+      return;
+    }
+    $('ckNote').textContent = '共 ' + list.length + ' 条';
+    tb.innerHTML = list.slice(0, 100).map(c =>
+      '<tr><td class="mark"></td><td class="num">' + fmtDT(c.Time) + '</td>' +
+      '<td class="mono">' + esc(c.AccountID || '—') + '</td>' +
+      '<td>' + (c.OK ? '<span class="tag ok">成功</span>' : '<span class="tag bad">失败</span>') + '</td>' +
+      '<td class="dim" style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(c.Detail || '') + '">' + esc(c.Detail || '') + '</td></tr>'
+    ).join('');
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="5"><div class="empty">' + esc(e.message) + '</div></td></tr>';
+  }
+}
+if ($('btnCheckin')) $('btnCheckin').onclick = () => loadCheckin();
+document.querySelectorAll('[data-taskrun]').forEach(b => { b.onclick = () => runTask(b.dataset.taskrun); });
+
+/* ── 子钥匙（prime 原生接口）───────────────────────────────────────────
+   GET /panel/api/keys → [{id,name,quota,used,models,disabled,expires_at,…}]
+   POST /panel/api/keys {name} → {plain, key}（plain 明文只返回这一次）
+   DELETE /panel/api/keys/{id} */
+async function loadKeys() {
+  const tb = $('keysBody');
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="8"><div class="empty">读取中…</div></td></tr>';
+  try {
+    const list = await api('keys');
+    if (!list.length) {
+      tb.innerHTML = '<tr><td colspan="8"><div class="empty"><div class="big">还没有子钥匙</div>在上方输入名称点「新建子钥匙」，明文只显示一次，复制后分发给调用方</div></td></tr>';
+      return;
+    }
+    tb.innerHTML = list.map(k => {
+      const models = (k.models || []).join(', ') || '全部模型';
+      const exp = k.expires_at ? fmtDT(k.expires_at) : '永不过期';
+      const usage = fmtNum(k.used) + (k.quota > 0 ? ' / ' + fmtNum(k.quota) : ' / 不限');
+      return '<tr><td class="mark"></td>' +
+        '<td class="mono" title="' + esc(k.id) + '">' + esc(k.id.slice(0, 18)) + '</td>' +
+        '<td>' + esc(k.name || '—') + '</td>' +
+        '<td class="num">' + usage + '</td>' +
+        '<td class="dim" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(models) + '">' + esc(models) + '</td>' +
+        '<td class="num">' + esc(exp) + '</td>' +
+        '<td>' + (k.disabled ? '<span class="tag bad">停用</span>' : '<span class="tag ok">启用</span>') + '</td>' +
+        '<td><button class="xs danger" data-delkey="' + esc(k.id) + '">删除</button></td></tr>';
+    }).join('');
+    tb.querySelectorAll('[data-delkey]').forEach(b => { b.onclick = () => delKey(b.dataset.delkey); });
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="8"><div class="empty">' + esc(e.message) + '</div></td></tr>';
+  }
+}
+async function createKey() {
+  const name = ($('keyName').value || '').trim();
+  if (!name) { toast('先填钥匙名称', 'err'); return; }
+  try {
+    const j = await api('keys', { method: 'POST', body: JSON.stringify({ name }) });
+    $('keyName').value = '';
+    loadKeys();
+    // 明文只展示一次：弹窗 + 复制按钮
+    $('plainKey').textContent = j.plain;
+    $('plainVeil').classList.add('on');
+    toast('子钥匙已创建', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function delKey(id) {
+  if (!confirm('删除子钥匙 ' + id + '？\n删除后该钥匙立即失效，无法恢复。')) return;
+  try {
+    await api('keys/' + encodeURIComponent(id), { method: 'DELETE' });
+    toast('已删除', 'ok');
+    loadKeys();
+  } catch (e) { toast(e.message, 'err'); }
+}
+if ($('btnKeyCreate')) $('btnKeyCreate').onclick = createKey;
+if ($('keyName')) $('keyName').addEventListener('keydown', e => { if (e.key === 'Enter') createKey(); });
+if ($('btnKeys')) $('btnKeys').onclick = () => loadKeys();
+if ($('btnCopyPlain')) $('btnCopyPlain').onclick = () => {
+  const t = $('plainKey').textContent;
+  if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => toast('已复制到剪贴板', 'ok'), () => toast('复制失败，请手动复制', 'err'));
+  else toast('请手动复制', 'err');
+};
+if ($('btnClosePlain')) $('btnClosePlain').onclick = () => $('plainVeil').classList.remove('on');

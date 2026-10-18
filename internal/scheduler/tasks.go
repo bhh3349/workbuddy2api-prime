@@ -160,10 +160,7 @@ func (s *Scheduler) runKeepalive(_ context.Context) error {
 //     跳过 unforgeable 任务与 DESKTOP_ONLY_TASKS）
 //
 // 注意：global（国际版）账号与企业号（enterpriseId 非空）跳过个人成长体系。
-func (s *Scheduler) runGrowth(_ context.Context) error {
-	s.logf("scheduler: 成长任务引擎尚未实现（TODO），本轮跳过")
-	return nil
-}
+// 实现见 internal/scheduler/growth.go（runGrowth）。
 
 // sleepJitter 睡眠 [min, max] 区间内的随机时长；ctx 取消时返回 false。
 func sleepJitter(ctx context.Context, min, max time.Duration) bool {

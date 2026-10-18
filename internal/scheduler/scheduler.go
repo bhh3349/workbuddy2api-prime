@@ -185,6 +185,9 @@ type Scheduler struct {
 	modelDir         *upstream.ModelDirClient // 模型目录抓取客户端（SetModelDir 注入）
 	modelDirCacheDir string                   // 模型目录缓存目录（SetModelDir 注入）
 
+	growth  *upstream.Growth // 成长任务上游客户端（SetGrowth 注入，未注入时成长任务为占位）
+	gEngine *GrowthEngine    // 成长任务引擎（惰性创建）
+
 	running   bool
 	runCtx    context.Context
 	runCancel context.CancelFunc
