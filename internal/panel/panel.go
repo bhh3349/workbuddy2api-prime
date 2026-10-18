@@ -19,6 +19,7 @@ import (
 	"workbuddy2api-prime/internal/pool"
 	"workbuddy2api-prime/internal/scheduler"
 	"workbuddy2api-prime/internal/types"
+	"workbuddy2api-prime/internal/upstream"
 )
 
 //go:embed index.html
@@ -35,11 +36,12 @@ type Panel struct {
 	mu       sync.Mutex
 	adminKey string       // 当前管理员密钥（SetAdminKey 设置，供 SetupNeeded 判断）
 	devices  *deviceStore // 进行中的设备授权会话
+	billing  *upstream.Billing
 }
 
 // New 创建 Panel。各参数可为 nil（对应接口返回空数据），但正常使用应全传。
 func New(p *pool.Pool, sched *scheduler.Scheduler, ledger *billing.Ledger, keys *apikeys.Store, auth *auth.Store) *Panel {
-	return &Panel{pool: p, sched: sched, ledger: ledger, keys: keys, auth: auth}
+	return &Panel{pool: p, sched: sched, ledger: ledger, keys: keys, auth: auth, billing: upstream.NewBilling()}
 }
 
 // RegisterRoutes 把面板页面与 API 挂到 mux 上。
@@ -57,6 +59,14 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /panel/api/accounts/device/start", p.handleDeviceStart)
 	mux.HandleFunc("GET /panel/api/accounts/device/poll", p.handleDevicePoll)
 	mux.HandleFunc("POST /panel/api/accounts/import", p.handleAccountImport)
+	// 账号运维：单号签到/余额、批量操作、停用启用、删除
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/checkin", p.handleAccountCheckin)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/balance", p.handleAccountBalance)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/disable", p.handleAccountDisable)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/enable", p.handleAccountEnable)
+	mux.HandleFunc("DELETE /panel/api/accounts/{uid}", p.handleAccountRemove)
+	mux.HandleFunc("POST /panel/api/checkin_all", p.handleCheckinAll)
+	mux.HandleFunc("POST /panel/api/balance_all", p.handleBalanceAll)
 }
 
 // serveIndex 返回单页 HTML。

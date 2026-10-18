@@ -253,7 +253,23 @@ func (p *Panel) pollDeviceFlow(deviceCode string) (done bool, acct *types.Accoun
 		return false, nil, err
 	}
 	p.devices.del(deviceCode)
+	// 余额拉取与进池由调用方（handleDevicePoll）经 enrichNewAccount 完成，
+	// 以便把 balance_error 带回给前端。
 	return true, account, nil
+}
+
+// enrichNewAccount 新账号入库后的增强：拉余额写回 + 推进 pool。
+// 余额拉取失败只记录，不返回错误（不阻塞登录/导入流程）。
+func (p *Panel) enrichNewAccount(account *types.Account) (balanceErr string) {
+	if p.billing != nil {
+		if _, _, err := p.refreshBalanceLocked(account); err != nil {
+			balanceErr = err.Error()
+		}
+	}
+	if p.pool != nil {
+		p.pool.AddAccount(account)
+	}
+	return balanceErr
 }
 
 // importToken 粘贴 token 入库（设备流不可用时的备选）。
@@ -307,6 +323,8 @@ func (p *Panel) importToken(accessToken, refreshToken, uid, region string) (*typ
 	if err := p.auth.Save(account); err != nil {
 		return nil, err
 	}
+	// 与设备授权一致：立即拉余额 + 推进 pool（余额失败不阻塞导入）。
+	p.enrichNewAccount(account)
 	return account, nil
 }
 
@@ -352,9 +370,15 @@ func (p *Panel) handleDevicePoll(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"done": false})
 		return
 	}
-	writeJSON(w, map[string]any{"done": true, "account": map[string]string{
+	resp := map[string]any{"done": true, "account": map[string]string{
 		"id": acct.ID, "uid": acct.UID, "region": acct.Region,
-	}})
+	}}
+	if berr := p.enrichNewAccount(acct); berr != "" {
+		resp["balance_error"] = berr
+	} else {
+		resp["credits"] = acct.CreditTotal
+	}
+	writeJSON(w, resp)
 }
 
 // handleAccountImport: POST /panel/api/accounts/import

@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -155,5 +156,99 @@ func TestTaskRunUnknown(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code == http.StatusOK {
 		t.Fatal("未知任务应返回错误")
+	}
+}
+
+func post(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", path, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func del(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("DELETE", path, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestAccountDisableEnableRemove 覆盖停用/启用/删除接口（不碰上游）。
+func TestAccountDisableEnableRemove(t *testing.T) {
+	pn, mux := newTestPanel(t)
+	acc := &types.Account{ID: "u1", UID: "u1", Region: "cn", AccessToken: "x"}
+	if err := pn.auth.Save(acc); err != nil {
+		t.Fatal(err)
+	}
+	pn.pool.AddAccount(acc)
+
+	// 停用
+	rec := post(t, mux, "/panel/api/accounts/u1/disable")
+	if rec.Code != 200 {
+		t.Fatalf("disable: %d %s", rec.Code, rec.Body.String())
+	}
+	if !pn.pool.Get("u1").Disabled {
+		t.Fatal("停用后 pool 未生效")
+	}
+	// 停用后不再参与选号
+	if _, err := pn.pool.Pick(types.PickRequest{}); err == nil {
+		t.Fatal("停用账号仍被选中")
+	}
+	// 启用
+	rec = post(t, mux, "/panel/api/accounts/u1/enable")
+	if rec.Code != 200 || pn.pool.Get("u1").Disabled {
+		t.Fatalf("enable 失败: %d", rec.Code)
+	}
+	// 不存在的账号 → 404
+	if rec := post(t, mux, "/panel/api/accounts/nope/disable"); rec.Code != 404 {
+		t.Fatalf("want 404, got %d", rec.Code)
+	}
+	// 删除
+	rec = del(t, mux, "/panel/api/accounts/u1")
+	if rec.Code != 200 {
+		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
+	}
+	if pn.pool.Get("u1") != nil {
+		t.Fatal("删除后 pool 仍有账号")
+	}
+	if _, err := pn.auth.Load("u1"); err == nil {
+		t.Fatal("删除后凭证文件仍在")
+	}
+	if rec := del(t, mux, "/panel/api/accounts/u1"); rec.Code != 404 {
+		t.Fatalf("重复删除 want 404, got %d", rec.Code)
+	}
+}
+
+// TestCheckinAllTriggersTask 全量签到触发任务（异步，验证 accepted）。
+func TestCheckinAllTriggersTask(t *testing.T) {
+	pn, mux := newTestPanel(t)
+	pn.sched.RegisterBuiltinTasks()
+	ctx := context.Background()
+	pn.sched.Start(ctx)
+	defer pn.sched.Stop()
+	rec := post(t, mux, "/panel/api/checkin_all")
+	if rec.Code != 200 {
+		t.Fatalf("checkin_all: %d %s", rec.Code, rec.Body.String())
+	}
+	var j map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &j); err != nil || j["started"] != true {
+		t.Fatalf("bad resp: %s", rec.Body.String())
+	}
+}
+
+// TestAccountBalanceNoUpstream 无 billing 桩时余额接口应 502 而非 panic。
+func TestAccountBalanceNoUpstream(t *testing.T) {
+	pn, mux := newTestPanel(t)
+	acc := &types.Account{ID: "u1", UID: "u1", Region: "cn"}
+	pn.pool.AddAccount(acc)
+	pn.billing = nil // 模拟未初始化
+	rec := post(t, mux, "/panel/api/accounts/u1/balance")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("want 502, got %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "余额刷新失败") {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
 	}
 }
