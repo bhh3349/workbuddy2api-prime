@@ -489,7 +489,7 @@ let lastPackagesAt = 0;
 let expFetching = false;                       // 到期卡片在途标记（防重复打上游）
 const EXP_FRESH_MS = 2 * 60 * 1000;            // 缓存新鲜窗口：2 分钟内复用
 
-const TITLES = { accounts: '账号池', usage: '用量', checkin: '签到任务', tasks: '任务中心', keys: '子钥匙', packages: '积分构成', models: '模型目录' }; // prime 隐藏：配置/运行日志
+const TITLES = { accounts: '账号池', usage: '用量', checkin: '签到任务', tasks: '任务中心', keys: '子钥匙', packages: '积分构成', models: '模型目录', config: '配置', logs: '运行日志' };
 function go(v) {
   view = v;
   document.querySelectorAll('.view').forEach(s => s.hidden = s.id !== 'view-' + v);
@@ -501,6 +501,8 @@ function go(v) {
   if (v === 'checkin') loadCheckin();
   if (v === 'keys') loadKeys();
   if (v === 'tasks') reattachQueueView();
+  if (v === 'config') loadConfig();
+  if (v === 'logs') loadLogs();
   // 到期提醒卡片：默认可见，进页面即用 overview 快照渲染（零上游请求，随首页统计
   // 每轮刷新）。不再「打开账号池就打上游」——逐账号实时查在账号多时会卡死面板。
   // 完整逐包明细由卡片上的「检查」按钮显式触发（loadPackages/loadExpiry）。
@@ -995,43 +997,33 @@ if ($('logChips')) { // prime: 隐藏视图守卫
     loadLogs();
   });
 }
+// prime 运行日志：GET /panel/api/logs?limit=&ch=，服务端已按频道过滤。
 async function loadLogs() {
-  const box = $('logBox');
-  const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
-  const limit = ($('reqLimit') && $('reqLimit').value) || 100;
-  // 时间范围由归档侧过滤（不是前端筛已拉取的条目）：区间落在更早的时间段时，
-  // 「最近 N 条」里根本不会有那些记录，必须让服务端按时间取。
-  const rq = trangeQuery('reqRange', false);
-  rq.set('limit', limit);
+  const box = $('logBody');
+  if (!box) return;
+  const ch = ($('logCh') && $('logCh').value) || 'all';
+  const limit = ($('logLimit') && $('logLimit').value) || 200;
   try {
-    const [d, metrics, requestRows] = await Promise.all([
-      api('logs'),
-      api('request_metrics').catch(() => ({})),
-      api('request_logs?' + rq.toString()).catch(() => ({ entries: [] })),
-    ]);
-    // 归档开启时以归档为准——「区间内没有记录」是一个真实结果，不能回落成内存里
-    // 的最近 100 条（那会把筛选条件之外、时间范围之外的请求显示出来）。
-    // 只有归档关闭时才回落到内存指标，保证没有归档的部署仍能看到最近请求。
-    const archiveOn = !!(metrics && metrics.archive && metrics.archive.enabled);
-    const recent = archiveOn ? (requestRows.entries || []) : (metrics.recent || []);
-    renderRequestMetrics(metrics, recent);
-    const entries = (d.entries || []).filter(e => logCh === 'all' || e.ch === logCh);
-    box.innerHTML = entries.length
+    const d = await api('logs?limit=' + encodeURIComponent(limit) + '&ch=' + encodeURIComponent(ch));
+    const entries = d.entries || [];
+    box.textContent = entries.length
       ? entries.map(e => {
-        const lvl = /error|失败|错误/.test(e.text) ? ' e' : /warn|冷却|熔断/.test(e.text) ? ' w' : '';
-        const t = e.ts ? new Date(e.ts).toLocaleTimeString('zh-CN', { hour12: false }) : '';
-        const ch = logCh === 'all' ? '<i class="lch c-' + esc(e.ch) + '">' + ({ task: '任务', chat: '对话', sys: '系统' }[e.ch] || e.ch) + '</i>' : '';
-        return '<span class="ln' + lvl + '">' + ch + esc(t + ' ' + e.text) + '</span>';
-      }).join('')
-      : '<span style="color:var(--ink-3)">暂无日志</span>';
-    if (logPin && atEnd) box.scrollTop = box.scrollHeight;
+          const t = e.ts ? new Date(e.ts).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+          const chName = { task: '任务', chat: '对话', sys: '系统' }[e.ch] || e.ch;
+          return '[' + t + '][' + chName + '] ' + e.text;
+        }).join('\n')
+      : '暂无日志（日志从进程启动开始记录，重启后清空）';
+    box.scrollTop = box.scrollHeight;
     const counts = {};
-    for (const e of (d.entries || [])) counts[e.ch] = (counts[e.ch] || 0) + 1;
-    $('logNote').textContent = logCh === 'all'
-      ? '任务 ' + (counts.task || 0) + ' · 对话 ' + (counts.chat || 0) + ' · 系统 ' + (counts.sys || 0)
-      : (logCh === 'task' ? '任务' : logCh === 'chat' ? '对话' : '系统') + ' ' + entries.length + ' 行';
-  } catch (e) { /* 概览已提示 */ }
+    for (const e of entries) counts[e.ch] = (counts[e.ch] || 0) + 1;
+    const note = $('logNote');
+    if (note) note.textContent = '任务 ' + (counts.task || 0) + ' · 对话 ' + (counts.chat || 0) + ' · 系统 ' + (counts.sys || 0) + '（内存保留最近 2000 条）';
+  } catch (e) { toast('读取日志失败：' + e.message, 'err'); }
 }
+document.addEventListener('DOMContentLoaded', () => {
+  const b = $('btnLogs');
+  if (b) b.addEventListener('click', loadLogs);
+});
 
 function renderRequestMetrics(m, entries) {
   m = m || {};
@@ -1235,29 +1227,18 @@ function put(obj, path, val) {
   o[path[path.length - 1]] = val;
 }
 
+// prime 配置视图：GET /panel/api/config 读取脱敏配置，POST 保存可调参数。
 async function loadConfig() {
   try {
     const d = await api('config');
-    cfgLoaded = d.config;
-    $('cfgPath').textContent = d.path || '';
-    const f = $('cfgForm');
-    for (const [name, path] of Object.entries(CFG_MAP)) {
-      const el = f.elements[name];
-      if (!el) continue;
-      const v = dig(cfgLoaded, path);
-      if (el.type === 'checkbox') el.checked = !!v;
-      else if (Array.isArray(v)) el.value = v.join(', ');
-      else el.value = v == null ? '' : v;
-    }
-    markDurationFields(); // 回填后重置校验态（清掉残留红框；现值来自后端必然合法）
-    $('cfgNote').textContent = '';
+    $('cfgListen').value = d.listen_addr || '';
+    $('cfgKeyState').value = d.has_admin_key ? '已设置' : '未设置';
+    $('cfgAuthDir').value = d.auth_dir || '';
+    $('cfgDataDir').value = d.data_dir || '';
+    $('cfgUpstream').value = d.upstream_base || '';
+    $('cfgMaxFails').value = d.max_consecutive_fails != null ? d.max_consecutive_fails : '';
   } catch (e) { toast('读取配置失败：' + e.message, 'err'); }
 }
-function collectConfig() {
-  const f = $('cfgForm'), out = {};
-  for (const [name, path] of Object.entries(CFG_MAP)) {
-    const el = f.elements[name];
-    if (!el) continue;
     let v;
     if (el.type === 'checkbox') v = el.checked;
     else if (el.type === 'number') { v = el.value.trim() === '' ? undefined : Number(el.value); }
@@ -1272,6 +1253,22 @@ function collectConfig() {
   }
   return out;
 }
+// prime 配置保存：只提交可调参数。
+document.addEventListener('DOMContentLoaded', () => {
+  const f = $('cfgForm');
+  if (f) f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {};
+    const up = $('cfgUpstream').value.trim();
+    body.upstream_base = up;
+    const mf = $('cfgMaxFails').value.trim();
+    if (mf !== '') body.max_consecutive_fails = Number(mf);
+    try {
+      await api('config', { method: 'POST', body: JSON.stringify(body) });
+      toast('已保存（监听地址等需重启生效）', 'ok');
+    } catch (err) { toast('保存失败：' + err.message, 'err'); }
+  });
+});
 /* Go 时长字段即时校验：空 = 沿用现值（collectConfig 跳过发送）；非空必须是
    ParseDuration 语法（30m / 2h / 600s / 1h30m，可组合可带小数）。与后端
    config.go normalize() 的 time.ParseDuration 同口径，脏值在前端就地标红，

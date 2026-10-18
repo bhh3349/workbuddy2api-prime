@@ -6,9 +6,11 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"workbuddy2api-prime/internal/auth"
 	"workbuddy2api-prime/internal/billing"
 	"workbuddy2api-prime/internal/config"
+	"workbuddy2api-prime/internal/logbuf"
 	"workbuddy2api-prime/internal/panel"
 	"workbuddy2api-prime/internal/pool"
 	"workbuddy2api-prime/internal/protocol"
@@ -146,6 +149,9 @@ func clientIP(r *http.Request) string {
 }
 
 func main() {
+	// 日志同时 tee 到内存环形缓冲，供面板「运行日志」视图查询。
+	log.SetOutput(io.MultiWriter(os.Stderr, logbuf.Writer()))
+
 	cfg, err := config.Load("config.json")
 	if err != nil {
 		log.Fatalf("加载配置失败: %v", err)
@@ -197,6 +203,7 @@ func main() {
 	protocol.RegisterRoutes(mux, orch)
 	pn := panel.New(p, sched, ledger, keyStore, authStore)
 	pn.SetAdminKey(cfg.AdminKey)
+	pn.SetConfig(cfg)
 	pn.RegisterRoutes(mux)
 
 	// /healthz 公开（健康检查），其余走鉴权。

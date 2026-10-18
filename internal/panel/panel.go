@@ -16,6 +16,7 @@ import (
 	"workbuddy2api-prime/internal/apikeys"
 	"workbuddy2api-prime/internal/auth"
 	"workbuddy2api-prime/internal/billing"
+	"workbuddy2api-prime/internal/config"
 	"workbuddy2api-prime/internal/pool"
 	"workbuddy2api-prime/internal/scheduler"
 	"workbuddy2api-prime/internal/types"
@@ -35,6 +36,7 @@ type Panel struct {
 	ledger *billing.Ledger
 	keys   *apikeys.Store
 	auth   *auth.Store
+	cfg    *config.Config
 
 	mu       sync.Mutex
 	adminKey string       // 当前管理员密钥（SetAdminKey 设置，供 SetupNeeded 判断）
@@ -47,6 +49,9 @@ func New(p *pool.Pool, sched *scheduler.Scheduler, ledger *billing.Ledger, keys 
 	return &Panel{pool: p, sched: sched, ledger: ledger, keys: keys, auth: auth, billing: upstream.NewBilling()}
 }
 
+// SetConfig 注入配置（供配置视图读写）。
+func (p *Panel) SetConfig(c *config.Config) { p.cfg = c }
+
 // RegisterRoutes 把面板页面与 API 挂到 mux 上。
 func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /panel/", p.serveIndex)
@@ -55,6 +60,9 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /panel/api/usage", p.handleUsage)
 	mux.HandleFunc("GET /panel/api/usage/series", p.handleUsageSeries)
 	mux.HandleFunc("GET /panel/api/usage/recent", p.handleUsageRecent)
+	mux.HandleFunc("GET /panel/api/logs", p.handleLogs)
+	mux.HandleFunc("GET /panel/api/config", p.handleConfigGet)
+	mux.HandleFunc("POST /panel/api/config", p.handleConfigSet)
 	mux.HandleFunc("GET /panel/api/checkin", p.handleCheckin)
 	mux.HandleFunc("POST /panel/api/tasks/{name}/run", p.handleTaskRun)
 	mux.HandleFunc("GET /panel/api/keys", p.handleKeysList)
