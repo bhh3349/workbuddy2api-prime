@@ -50,6 +50,7 @@ var errBillingNA = errors.New("billing 客户端未初始化")
 
 // handleAccountCheckin: POST /panel/api/accounts/{uid}/checkin
 // 单号签到：签到 + 余额刷新，结果记入签到历史。
+// 返回兼容 linguo 前端：{ok,checkin_done,checkin_message,credits,credits_total}。
 func (p *Panel) handleAccountCheckin(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
 	acc := p.findAccount(uid)
@@ -63,11 +64,16 @@ func (p *Panel) handleAccountCheckin(w http.ResponseWriter, r *http.Request) {
 	}
 	res := p.sched.CheckinAccount(r.Context(), acc)
 	p.sched.RecordCheckin(res)
-	writeJSON(w, map[string]any{
-		"ok":      res.OK,
-		"detail":  res.Detail,
-		"credits": acc.CreditTotal,
-	})
+	resp := map[string]any{
+		"ok":            true,
+		"checkin_done":  res.OK,
+		"credits":       int64(acc.CreditTotal),
+		"credits_total": int64(acc.CreditTotal),
+	}
+	if res.Detail != "" {
+		resp["checkin_message"] = res.Detail
+	}
+	writeJSON(w, resp)
 }
 
 // handleAccountBalance: POST /panel/api/accounts/{uid}/balance

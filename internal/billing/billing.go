@@ -75,9 +75,11 @@ func (l *Ledger) Record(r types.UsageRecord) error {
 
 // Bucket 是时间序列的一个桶：桶起始时间 + 该桶内的请求数与消耗积分。
 type Bucket struct {
-	Time     time.Time `json:"time"`
-	Requests int       `json:"requests"`
-	Credit   float64   `json:"credit"`
+	Time      time.Time `json:"time"`
+	Requests  int       `json:"requests"`
+	Credit    float64   `json:"credit"`
+	PromptTok int       `json:"prompt_tokens"` // 输入 token 合计（供面板堆叠图）
+	CompTok   int       `json:"completion_tokens"`
 }
 
 // BucketSeries 按时间把 [since, now] 切成 buckets 个等宽桶，返回每桶聚合。
@@ -127,6 +129,8 @@ func (l *Ledger) BucketSeries(apiKeyID string, since time.Time, buckets int) ([]
 		}
 		out[idx].Requests++
 		out[idx].Credit += r.Credit
+		out[idx].PromptTok += r.PromptTok
+		out[idx].CompTok += r.CompTok
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("billing: 读取账本失败: %w", err)

@@ -37,18 +37,18 @@ type Panel struct {
 	adminKey string       // 当前管理员密钥（SetAdminKey 设置，供 SetupNeeded 判断）
 	devices  *deviceStore // 进行中的设备授权会话
 	billing  *upstream.Billing
+	startedAt time.Time // 进程启动时间（overview.uptime_sec 用）
 }
 
 // New 创建 Panel。各参数可为 nil（对应接口返回空数据），但正常使用应全传。
 func New(p *pool.Pool, sched *scheduler.Scheduler, ledger *billing.Ledger, keys *apikeys.Store, auth *auth.Store) *Panel {
-	return &Panel{pool: p, sched: sched, ledger: ledger, keys: keys, auth: auth, billing: upstream.NewBilling()}
+	return &Panel{pool: p, sched: sched, ledger: ledger, keys: keys, auth: auth, billing: upstream.NewBilling(), startedAt: time.Now()}
 }
 
 // RegisterRoutes 把面板页面与 API 挂到 mux 上。
 func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /panel/", p.serveIndex)
 	mux.HandleFunc("GET /panel/api/accounts", p.handleAccounts)
-	mux.HandleFunc("GET /panel/api/usage", p.handleUsage)
 	mux.HandleFunc("GET /panel/api/usage/series", p.handleUsageSeries)
 	mux.HandleFunc("GET /panel/api/usage/recent", p.handleUsageRecent)
 	mux.HandleFunc("GET /panel/api/checkin", p.handleCheckin)
@@ -67,6 +67,9 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /panel/api/accounts/{uid}", p.handleAccountRemove)
 	mux.HandleFunc("POST /panel/api/checkin_all", p.handleCheckinAll)
 	mux.HandleFunc("POST /panel/api/balance_all", p.handleBalanceAll)
+	// linguo 前端兼容层（index.html/app.js 直接套用，接口形态见 linguo_compat.go）。
+	// 注意：GET /panel/api/usage 已改为 linguo 形态（旧自研前端已下线，无其他调用方）。
+	p.registerLinguoCompat(mux)
 }
 
 // serveIndex 返回单页 HTML。
@@ -137,26 +140,6 @@ func (p *Panel) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		views = append(views, v)
 	}
 	writeJSON(w, views)
-}
-
-// handleUsage 返回用量聚合。参数：key（子钥匙 ID，空=全部）、hours（默认 24）。
-func (p *Panel) handleUsage(w http.ResponseWriter, r *http.Request) {
-	if p.ledger == nil {
-		writeJSON(w, billing.Summary{})
-		return
-	}
-	hours := 24
-	if h := r.URL.Query().Get("hours"); h != "" {
-		if n, err := strconv.Atoi(h); err == nil && n > 0 {
-			hours = n
-		}
-	}
-	sum, err := p.ledger.Query(r.URL.Query().Get("key"), time.Now().Add(-time.Duration(hours)*time.Hour))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "查询用量失败: "+err.Error())
-		return
-	}
-	writeJSON(w, sum)
 }
 
 // handleUsageSeries 返回用量时间序列。参数：key、hours（默认24）、buckets（默认24）。
