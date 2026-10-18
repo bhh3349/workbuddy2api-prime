@@ -858,6 +858,21 @@ function mdRateValue(m) {
   return Number.isFinite(n) ? n : Infinity;
 }
 
+// mdHasPromo 模型是否有折扣/限免（机器可读折扣系数，或徽章标签）。
+function mdHasPromo(m) {
+  return (m.promo_factor != null) || !!m.promo_label;
+}
+
+// mdDisplayId 展示用模型 ID：CN:名称-单价 / GL:名称-单价。
+// 单价取生效价（promo_credits 优先，否则 credits）。
+function mdDisplayId(m) {
+  const prefix = m.realm === 'cn' ? 'CN' : m.realm === 'intl' ? 'GL' : '';
+  const name = m.id || m.name || '';
+  const price = (m.promo_credits != null && m.promo_credits !== '') ? m.promo_credits : (m.credits || '');
+  const p = prefix ? prefix + ':' : '';
+  return p + name + (price ? '-' + price : '');
+}
+
 // mdSearchText 参与关键字搜索的字段（ID / 展示名 / 描述 / 标签）。
 function mdSearchText(m) {
   return [m.id, m.name, m.description, (m.tags || []).join(' ')]
@@ -921,7 +936,7 @@ function mdRowHtml(m) {
   const capHtml = caps.length ? '<div class="id" style="margin-top:2px">' + caps.join(' ') + '</div>' : '';
   const tip = m.description ? ' title="' + esc(m.description) + '"' : '';
   const fmtK = v => v >= 1000 ? Math.round(v / 1000) + 'K' : String(v);
-  return '<tr><td class="mark" aria-hidden="true"><i></i></td><td class="who"' + tip + '><div class="nm">' + esc(m.id) + '</div><div class="id">' + esc(m.name || '') + '</div>' + capHtml + '</td>' +
+  return '<tr><td class="mark" aria-hidden="true"><i></i></td><td class="who"' + tip + '><div class="nm">' + esc(mdDisplayId(m)) + '</div><div class="id">' + esc(m.name || '') + '</div>' + capHtml + '</td>' +
     '<td class="num">' + rateCell(m) + '</td>' +
     '<td>' + (m.default_effort ? '<span class="tag ok">' + esc(m.default_effort) + '</span>' : '<span style="color:var(--ink-3)">—</span>') + '</td>' +
     '<td class="efs" style="white-space:normal">' + effs + '</td>' +
@@ -935,7 +950,15 @@ function renderModels() {
   if (!list.length) {
     tb.innerHTML = '<tr><td colspan="7"><div class="empty">没有符合当前筛选条件的模型</div></td></tr>';
   } else {
-    tb.innerHTML = list.map(m => mdRowHtml(m)).join('');
+    // 按「折扣/限免」与「原价」分组展示（组内保持当前排序）。
+    const promo = list.filter(mdHasPromo);
+    const full = list.filter(m => !mdHasPromo(m));
+    const groupHead = (label, n) =>
+      '<tr class="md-group"><td colspan="7"><span class="tag ok">' + esc(label) + '</span> <span class="note">' + n + ' 个</span></td></tr>';
+    let html = '';
+    if (promo.length) html += groupHead('折扣 / 限免', promo.length) + promo.map(m => mdRowHtml(m)).join('');
+    if (full.length) html += groupHead('原价', full.length) + full.map(m => mdRowHtml(m)).join('');
+    tb.innerHTML = html;
   }
   const filtered = list.length !== mdAll.length;
   $('mdCount').textContent = !mdAll.length ? ''
