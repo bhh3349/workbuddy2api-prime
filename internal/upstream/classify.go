@@ -98,6 +98,13 @@ func classifyUpstreamError(status int, body string) types.ReportStatus {
 	if (status == http.StatusBadRequest || status == http.StatusNotFound) && businessCode(body) == "11102" {
 		return types.ReportRateLimited
 	}
+	// 11128「conversation id missing」：上游渠道校验未通过（会话头缺失/格式不对，
+	// 2026-10-16 起收紧，见 linguo issue #188）。注意外层 code 是 no_healthy_account，
+	// 11128 藏在转义的内层 message 里，businessCode 正则抓不到，按 marker 直接判。
+	// 请求级问题：换号重试无用（头不对换谁都一样），不罚账号。
+	if containsAny(body, []string{"11128", "conversation id missing"}) {
+		return types.ReportBadRequest
+	}
 	// 402：真正的余额耗尽状态码。
 	if status == http.StatusPaymentRequired {
 		return types.ReportCreditExhausted

@@ -62,17 +62,24 @@ func newUUID() string {
 		hexStr[0:8], hexStr[8:12], hexStr[12:16], hexStr[16:20], hexStr[20:32])
 }
 
-// sessionHeaders 构造每请求新生成的会话头族（依据 hub build_identity_headers）。
+// sessionHeaders 构造每请求新生成的会话头族（依据 hub build_identity_headers，
+// 2026-10-16 上游收紧渠道校验后按 linguo commit 062c7b5 对齐：
+//   - X-Conversation-ID / X-Conversation-Request-ID / X-Conversation-Message-ID
+//     三头必发且值须为标准 UUID v4（缺失或格式不对回 11128 "conversation id missing"）；
+//   - X-Request-ID 保持 32 位 hex（B3 链路兼容，不与 Message-ID 同值）；
+//   - 新增 X-Trace-ID（= Conversation-Request-ID）。
 func sessionHeaders() http.Header {
 	h := make(http.Header)
 	convID := newUUID()
 	reqID := newUUID() // X-Conversation-Request-ID 与 X-Root-Request-ID 同值
-	msgID := newUUID() // X-Conversation-Message-ID 与 X-Request-ID 同值
+	msgUUID := newUUID()
+	msgID := strings.ReplaceAll(msgUUID, "-", "") // X-Request-ID：32 hex
 	h.Set("X-Conversation-ID", convID)
 	h.Set("X-Conversation-Request-ID", reqID)
 	h.Set("X-Root-Request-ID", reqID)
-	h.Set("X-Conversation-Message-ID", msgID)
+	h.Set("X-Conversation-Message-ID", msgUUID)
 	h.Set("X-Request-ID", msgID)
+	h.Set("X-Trace-ID", reqID)
 	return h
 }
 
