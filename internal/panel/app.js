@@ -7,8 +7,8 @@ let overviewData = null, cfgLoaded = null;
 let logPin = true, loginState = null, loginTimer = null;
 let refTimer = null;
 /* 视图级筛选状态（模块级声明放在文件顶部，避免顶层 go() 早于声明执行时踩 TDZ）。 */
-let mdFilter = { q: '', realm: '', cap: '', effort: '', promo: '', sort: 'default' };
-let mdAll = [], mdProbes = {}, mdProbeOf = () => undefined;
+let mdFilter = { q: '', realm: '', promo: '', sort: 'default' };
+let mdAll = [];
 let reqFilter = { q: '', outcome: '' };
 let reqEntries = [];
 let usDim = 'account', usCreditDim = 'account', usSort = 'total';
@@ -481,7 +481,7 @@ let lastPackagesAt = 0;
 let expFetching = false;                       // 到期卡片在途标记（防重复打上游）
 const EXP_FRESH_MS = 2 * 60 * 1000;            // 缓存新鲜窗口：2 分钟内复用
 
-const TITLES = { accounts: '账号池', usage: '用量', packages: '积分构成' }; // prime 隐藏：任务中心/模型与档位/配置/运行日志
+const TITLES = { accounts: '账号池', usage: '用量', packages: '积分构成', models: '模型目录' }; // prime 隐藏：任务中心/配置/运行日志
 function go(v) {
   view = v;
   document.querySelectorAll('.view').forEach(s => s.hidden = s.id !== 'view-' + v);
@@ -489,6 +489,7 @@ function go(v) {
   $('ttl').textContent = TITLES[v];
   if (v === 'usage') loadUsage();
   if (v === 'packages') loadPackages();
+  if (v === 'models') loadModels();
   // 到期提醒卡片：默认可见，进页面即用 overview 快照渲染（零上游请求，随首页统计
   // 每轮刷新）。不再「打开账号池就打上游」——逐账号实时查在账号多时会卡死面板。
   // 完整逐包明细由卡片上的「检查」按钮显式触发（loadPackages/loadExpiry）。
@@ -752,29 +753,30 @@ function rateCell(m) {
 
 async function loadModels() {
   const tb = $('mdBody');
-  tb.innerHTML = '<tr><td colspan="7"><div class="empty">正在向上游查询…</div></td></tr>';
+  tb.innerHTML = '<tr><td colspan="5"><div class="empty">正在读取缓存…</div></td></tr>';
   try {
-    // 探测数据是可选增强：拉取失败不影响模型列表本身
-    const [d, pr] = await Promise.all([api('models'), api('model_probes').catch(() => ({}))]);
-    mdAll = d.models || [];
-    mdProbes = pr.probes || {};
+    // prime: 读本地缓存（每天 03:00 定时抓取），不直连上游
+    const d = await api('models');
+    mdAll = d.entries || [];
     if (!mdAll.length) {
-      tb.innerHTML = '<tr><td colspan="7"><div class="empty">上游未返回模型</div></td></tr>';
+      tb.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="big">还没有模型目录数据</div>点击右上角「立即刷新」从上游抓取（之后每天 03:00 自动更新）</div></td></tr>';
       $('mdCount').textContent = '';
-      $('mdNote').textContent = '上游未返回模型';
+      $('mdNote').textContent = '无缓存';
       return;
     }
-    // 探测键带域前缀（cn:glm-5.2），模型表显示裸名，按「精确命中或 :后缀」关联。
-    const probeKeys = Object.keys(mdProbes);
-    mdProbeOf = id => mdProbes[id] || mdProbes[probeKeys.find(k => k.endsWith(':' + id))];
-    const hit = mdAll.filter(m => mdProbeOf(m.id)).length;
-    $('mdNote').textContent = mdAll.length + ' 个模型 · 已刷新降级缓存' + (hit ? ' · ' + hit + ' 个有实测上限' : '');
+    $('mdNote').textContent = '数据更新于 ' + fmtDT(d.fetched_at) + ' · 每天 03:00 自动刷新';
     renderModels();
   } catch (e) {
     mdAll = [];
-    tb.innerHTML = '<tr><td colspan="7"><div class="empty">' + esc(e.message) + '</div></td></tr>';
+    tb.innerHTML = '<tr><td colspan="5"><div class="empty">' + esc(e.message) + '</div></td></tr>';
     $('mdCount').textContent = '';
   }
+}
+
+// fmtDT 把 RFC3339 时间格式化为本地可读串
+function fmtDT(s) {
+  if (!s) return '—';
+  return new Date(s).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 /* ── 模型筛选（按条件查询）───────────────────────────────────────────
@@ -789,9 +791,9 @@ function mdRateValue(m) {
   return Number.isFinite(n) ? n : Infinity;
 }
 
-// mdSearchText 参与关键字搜索的字段（ID / 展示名 / 厂商 / 描述 / 标签）。
+// mdSearchText 参与关键字搜索的字段（ID / 展示名 / 描述 / 标签）。
 function mdSearchText(m) {
-  return [m.id, m.name, m.vendor, m.description, (m.tags || []).join(' ')]
+  return [m.id, m.name, m.description, (m.tags || []).join(' ')]
     .filter(Boolean).join(' ').toLowerCase();
 }
 
@@ -805,16 +807,7 @@ function mdMatch(m, f) {
       if (!text.includes(kw)) return false;
     }
   }
-  if (f.realm && !String(m.id || '').startsWith(f.realm + ':')) return false;
-  if (f.cap === 'tool' && !m.supports_tool_call) return false;
-  if (f.cap === 'vision' && !m.supports_images) return false;
-  if (f.cap === 'reasoning' && !m.supports_reasoning) return false;
-  if (f.cap === 'default' && !m.is_default) return false;
-  if (f.effort === 'off') {
-    if (!m.can_disable_thinking) return false;
-  } else if (f.effort && !(m.supported_efforts || []).includes(f.effort)) {
-    return false;
-  }
+  if (f.realm && m.realm !== f.realm) return false;
   const factor = m.promo_factor == null ? null : Number(m.promo_factor);
   if (f.promo === 'promo' && factor == null && !m.promo_label) return false;
   if (f.promo === 'free' && !(factor === 0)) return false;
@@ -828,41 +821,40 @@ function mdSortList(list, f) {
   const out = list.slice();
   const num = v => { const n = Number(v || 0); return Number.isFinite(n) ? n : 0; };
   if (f.sort === 'rate') out.sort((a, b) => mdRateValue(a) - mdRateValue(b));
-  else if (f.sort === 'context') out.sort((a, b) => num(b.context_length) - num(a.context_length));
-  else if (f.sort === 'output') out.sort((a, b) => num(b.max_output_tokens) - num(a.max_output_tokens));
   else if (f.sort === 'name') out.sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
   return out;
 }
 
-// mdRowHtml 单个模型行（纯渲染，便于独立测试）。
-function mdRowHtml(m, pr) {
-  const eff = (m.supported_efforts || []).slice();
-  if (m.can_disable_thinking && eff.length && !eff.includes('off')) eff.push('off（可关）');
-  const effs = eff.length ? eff.map(e => '<span class="tag warn">' + esc(e) + '</span>').join(' ')
-    : '<span style="color:var(--ink-3);font-size:12.5px">' + (m.supports_reasoning ? '固定档 · 默认 ' + esc(m.default_effort || '?') : '不支持思考') + '</span>';
-  // 能力徽标：默认模型 / 工具调用 / 视觉 / 纯推理（上游目录全字段透出，缺失不显示）
-  const caps = [];
-  if (m.is_default) caps.push('<span class="tag ok">默认</span>');
-  if (m.supports_tool_call) caps.push('<span class="tag warn">工具</span>');
-  if (m.supports_images) caps.push('<span class="tag warn">视觉</span>');
-  if (m.supports_reasoning && !m.can_disable_thinking) caps.push('<span class="tag warn">思考常开</span>');
-  const capHtml = caps.length ? '<div class="id" style="margin-top:2px">' + caps.join(' ') + '</div>' : '';
+// mdRowHtml 单个模型行（prime 简表：模型 / 积分倍率 / 标签 / 说明）。
+// 积分倍率列复用 rateCell（含 promo 牌价删除线 + 限时免费徽章 + hover 说明）。
+function mdRowHtml(m) {
+  const tagHtml = [];
+  (m.tags || []).forEach(t => {
+    const label = String(t).replace(/^badge:/, '');
+    if (label && label !== m.promo_label) tagHtml.push('<span class="tag warn">' + esc(label) + '</span>');
+  });
+  if (m.supports_images) tagHtml.push('<span class="tag">视觉</span>');
+  if (m.supports_reasoning) tagHtml.push('<span class="tag">思考</span>');
+  const realmTag = m.realm === 'cn' ? '<span class="tag ok">国内</span>'
+    : m.realm === 'intl' ? '<span class="tag">国际</span>' : '';
   const tip = m.description ? ' title="' + esc(m.description) + '"' : '';
-  return '<tr><td class="mark" aria-hidden="true"><i></i></td><td class="who"' + tip + '><div class="nm">' + esc(m.id) + '</div><div class="id">' + esc(m.name || '') + '</div>' + capHtml + '</td>' +
+  const desc = m.description ? esc(m.description.length > 42 ? m.description.slice(0, 42) + '…' : m.description) : '<span style="color:var(--ink-3)">—</span>';
+  return '<tr><td class="mark" aria-hidden="true"><i></i></td>' +
+    '<td class="who"' + tip + '><div class="nm">' + esc(m.id) + '</div>' +
+    (m.name && m.name !== m.id ? '<div class="id">' + esc(m.name) + '</div>' : '') +
+    (realmTag ? '<div style="margin-top:2px">' + realmTag + '</div>' : '') + '</td>' +
     '<td class="num">' + rateCell(m) + '</td>' +
-    '<td>' + (m.default_effort ? '<span class="tag ok">' + esc(m.default_effort) + '</span>' : '<span style="color:var(--ink-3)">—</span>') + '</td>' +
-    '<td class="efs" style="white-space:normal">' + effs + '</td>' +
-    '<td class="num">' + (m.context_length ? Math.round(m.context_length / 1000) + 'K' : '—') + '</td>' +
-    outCell(m, pr) + '</tr>';
+    '<td>' + (tagHtml.length ? tagHtml.join(' ') : '<span style="color:var(--ink-3)">—</span>') + '</td>' +
+    '<td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"' + tip + '>' + desc + '</td></tr>';
 }
 
 function renderModels() {
   const tb = $('mdBody');
   const list = mdSortList(mdAll.filter(m => mdMatch(m)));
   if (!list.length) {
-    tb.innerHTML = '<tr><td colspan="7"><div class="empty">没有符合当前筛选条件的模型</div></td></tr>';
+    tb.innerHTML = '<tr><td colspan="5"><div class="empty">没有符合当前筛选条件的模型</div></td></tr>';
   } else {
-    tb.innerHTML = list.map(m => mdRowHtml(m, mdProbeOf(m.id))).join('');
+    tb.innerHTML = list.map(m => mdRowHtml(m)).join('');
   }
   const filtered = list.length !== mdAll.length;
   $('mdCount').textContent = !mdAll.length ? ''
@@ -872,9 +864,9 @@ function renderModels() {
 }
 
 function resetModelFilter() {
-  mdFilter = { q: '', realm: '', cap: '', effort: '', promo: '', sort: 'default' };
-  $('mdQ').value = ''; $('mdRealm').value = ''; $('mdCap').value = '';
-  $('mdEffort').value = ''; $('mdPromo').value = ''; $('mdSort').value = 'default';
+  mdFilter = { q: '', realm: '', promo: '', sort: 'default' };
+  $('mdQ').value = ''; $('mdRealm').value = '';
+  $('mdPromo').value = ''; $('mdSort').value = 'default';
   renderModels();
 }
 
@@ -886,13 +878,22 @@ if ($('mdQ')) { // prime: 隐藏视图守卫
     mdQTimer = setTimeout(() => { mdFilter.q = $('mdQ').value.trim(); renderModels(); }, 120);
   };
 }
-for (const [id, key] of [['mdRealm', 'realm'], ['mdCap', 'cap'], ['mdEffort', 'effort'], ['mdPromo', 'promo'], ['mdSort', 'sort']]) {
+for (const [id, key] of [['mdRealm', 'realm'], ['mdPromo', 'promo'], ['mdSort', 'sort']]) {
   const el = $(id);
   if (!el) continue;
   el.onchange = () => { mdFilter[key] = el.value; renderModels(); };
 }
 if ($('mdReset')) $('mdReset').onclick = resetModelFilter; // prime: 隐藏视图守卫
-if ($('btnModels')) $('btnModels').onclick = loadModels; // prime: 隐藏视图守卫
+if ($('btnModels')) $('btnModels').onclick = async () => {
+  const b = $('btnModels');
+  b.disabled = true; const old = b.textContent; b.textContent = '刷新中…';
+  try {
+    const r = await api('models/refresh', { method: 'POST' });
+    toast('模型目录已更新：' + r.count + ' 个模型', 'ok');
+    loadModels();
+  } catch (e) { toast(e.message, 'err'); }
+  b.disabled = false; b.textContent = old;
+};
 
 /* ── 日志（频道：全部/任务/对话/系统） ─────────────────────────────── */
 let logCh = 'all';

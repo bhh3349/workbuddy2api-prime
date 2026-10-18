@@ -185,6 +185,7 @@ func main() {
 		log.Fatalf("初始化 scheduler 失败: %v", err)
 	}
 	sched.SetBilling(upstream.NewBilling(), authStore.Save)
+	sched.SetModelDir(upstream.NewModelDirClient(), cfg.DataDir)
 	sched.RegisterBuiltinTasks()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

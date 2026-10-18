@@ -256,3 +256,36 @@ func TestAccountBalanceNoUpstream(t *testing.T) {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
 	}
 }
+
+// TestModelsEmpty 无缓存时返回 fetched_at:null + 空数组（前端显示空态引导）。
+func TestModelsEmpty(t *testing.T) {
+	_, mux := newTestPanel(t)
+	rec := get(t, mux, "/panel/api/models")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	var v struct {
+		FetchedAt *string `json:"fetched_at"`
+		Entries   []any   `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.FetchedAt != nil {
+		t.Fatalf("无缓存时 fetched_at 应为 null，got %v", *v.FetchedAt)
+	}
+	if v.Entries == nil || len(v.Entries) != 0 {
+		t.Fatalf("无缓存时 entries 应为空数组，got %v", v.Entries)
+	}
+}
+
+// TestModelsRefreshNoClient 未注入抓取客户端时返回 502 结构化错误（不 panic）。
+func TestModelsRefreshNoClient(t *testing.T) {
+	_, mux := newTestPanel(t)
+	req := httptest.NewRequest("POST", "/panel/api/models/refresh", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502", rec.Code)
+	}
+}

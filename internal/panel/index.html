@@ -605,6 +605,9 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
       <li><a href="#packages" data-view="packages">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.2 5.4 8 2.5l5.8 2.9v5.2L8 13.5l-5.8-2.9z"/><path d="M2.2 5.4 8 8.3l5.8-2.9M8 8.3v5.2"/></svg>
         积分构成</a></li>
+      <li><a href="#models" data-view="models">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.8 14 5v6L8 14.2 2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2v6"/></svg>
+        模型目录</a></li>
     </ul>
     <div class="sig">
       <div class="row"><span class="pulse" id="navPulse"></span><span id="navState">连接中</span></div>
@@ -713,6 +716,46 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
         <div class="pad"><div class="pk-grid" id="pkSummary"></div></div>
       </div>
       <div id="pkDetail"></div>
+    </section>
+
+    <!-- 模型目录：读本地缓存展示（每天 03:00 自动抓取），不直连上游 -->
+    <section class="view" id="view-models" hidden>
+      <div class="box">
+        <header>
+          <h3>模型目录 <span class="hint">积分倍率 / 限时免费 / 折扣标签</span></h3>
+          <span class="grow"></span>
+          <span class="note" id="mdNote">—</span>
+          <button class="xs" id="btnModels">立即刷新</button>
+        </header>
+        <div class="fbar" id="mdFilter">
+          <input id="mdQ" type="search" placeholder="搜索模型 ID / 名称 / 描述" aria-label="搜索模型">
+          <select id="mdRealm" aria-label="按域筛选">
+            <option value="">全部域</option>
+            <option value="cn">国内版 CN</option>
+            <option value="intl">国际版</option>
+          </select>
+          <select id="mdPromo" aria-label="按价格筛选">
+            <option value="">全部价格</option>
+            <option value="promo">有折扣 / 限时免费</option>
+            <option value="free">限时免费</option>
+            <option value="discount">打折（非免费）</option>
+          </select>
+          <select id="mdSort" aria-label="排序方式">
+            <option value="default">缓存默认顺序</option>
+            <option value="rate">积分倍率 低 → 高</option>
+            <option value="name">模型 ID A → Z</option>
+          </select>
+          <span class="grow"></span>
+          <span class="note" id="mdCount"></span>
+          <button class="xs ghost" id="mdReset" title="清空全部筛选条件">重置</button>
+        </div>
+        <div class="tbl-wrap">
+        <table class="acc md">
+          <thead><tr><th class="mark" aria-hidden="true"></th><th>模型</th><th>积分倍率</th><th>标签</th><th>说明</th></tr></thead>
+          <tbody id="mdBody"></tbody>
+        </table>
+        </div>
+      </div>
     </section>
 
     <!-- 用量 -->

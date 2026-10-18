@@ -26,6 +26,7 @@ func (s *Scheduler) RegisterBuiltinTasks() {
 	_ = s.Register(TaskCheckin, MustDailyAt("09:00", "21:00"), s.runCheckin)
 	_ = s.Register(TaskKeepalive, MustDailyAt("22:00"), s.runKeepalive)
 	_ = s.Register(TaskGrowth, MustDailyAt("01:00"), s.runGrowth)
+	_ = s.Register(TaskModelDir, MustDailyAt("03:00"), s.runModelDir)
 }
 
 // runCheckin 执行全账号签到。

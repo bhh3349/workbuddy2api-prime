@@ -182,6 +182,9 @@ type Scheduler struct {
 	billing *upstream.Billing          // 签到/余额上游客户端（SetBilling 注入，未注入时签到为占位）
 	saveAcc func(*types.Account) error // 账号变更持久化（SetBilling 注入）
 
+	modelDir         *upstream.ModelDirClient // 模型目录抓取客户端（SetModelDir 注入）
+	modelDirCacheDir string                   // 模型目录缓存目录（SetModelDir 注入）
+
 	running   bool
 	runCtx    context.Context
 	runCancel context.CancelFunc

@@ -72,6 +72,9 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /panel/api/checkin_all", p.handleCheckinAll)
 	mux.HandleFunc("POST /panel/api/balance_all", p.handleBalanceAll)
 	mux.HandleFunc("POST /panel/api/keepalive_all", p.handleKeepaliveAll)
+	// 模型目录：读缓存展示 + 手动立即刷新（定时任务每天 03:00 自动抓取）
+	mux.HandleFunc("GET /panel/api/models", p.handleModels)
+	mux.HandleFunc("POST /panel/api/models/refresh", p.handleModelsRefresh)
 }
 
 // serveIndex 返回单页 HTML。
@@ -119,6 +122,40 @@ func (p *Panel) handleKeepaliveAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "started": true})
+}
+
+// modelDirView 是模型目录接口形态：无缓存时 fetched_at 为 null，entries 为空数组。
+type modelDirView struct {
+	FetchedAt *string                `json:"fetched_at"`
+	Entries   []upstream.ModelEntry `json:"entries"`
+}
+
+// handleModels 返回模型目录缓存（只读，不触发上游请求）。
+func (p *Panel) handleModels(w http.ResponseWriter, r *http.Request) {
+	v := modelDirView{Entries: []upstream.ModelEntry{}}
+	if p.sched != nil {
+		if entries, at, err := p.sched.ModelDirSnapshot(); err == nil {
+			s := at.Format(time.RFC3339)
+			v.FetchedAt = &s
+			v.Entries = entries
+		}
+	}
+	writeJSON(w, v)
+}
+
+// handleModelsRefresh 立即抓取一次模型目录（复用定时任务同一函数）。
+func (p *Panel) handleModelsRefresh(w http.ResponseWriter, r *http.Request) {
+	if p.sched == nil {
+		writeError(w, http.StatusServiceUnavailable, "scheduler 未初始化")
+		return
+	}
+	n, err := p.sched.RefreshModelDir(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "抓取失败: "+err.Error())
+		return
+	}
+	_, at, _ := p.sched.ModelDirSnapshot()
+	writeJSON(w, map[string]any{"ok": true, "count": n, "fetched_at": at.Format(time.RFC3339)})
 }
 
 // accountView 是账号行视图：基础信息 + 运行态快照合并。
