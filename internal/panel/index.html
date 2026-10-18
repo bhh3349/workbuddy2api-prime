@@ -112,10 +112,16 @@ button.ghost:hover{border-color:var(--acc);color:var(--acc);filter:none}
 button.ghost.on{border-color:var(--acc);color:var(--acc);background:var(--acc-dim)}
 button.danger{background:transparent;border:1px solid var(--bad);color:var(--bad)}
 button.danger:hover{background:var(--bad-dim);filter:none}
+button.danger-solid{background:var(--bad);border:1px solid var(--bad);color:#fff}
+button.danger-solid:hover{background:var(--bad);filter:brightness(1.12)}
 button.sm{padding:4px 10px;font-size:12px}
 input,select,textarea{background:var(--bg);border:1px solid var(--line2);color:var(--tx);
   border-radius:7px;padding:7px 11px;font-size:13px}
 input:focus,select:focus,textarea:focus{border-color:var(--acc);outline:none}
+/* select 去掉系统原生箭头，换自定义 chevron */
+select{appearance:none;-webkit-appearance:none;padding-right:30px;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a8f98' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .toolbar .sp{flex:1}
 .seg{display:inline-flex;background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:3px;gap:2px}
@@ -317,6 +323,20 @@ function openVeil(html){$('veilBox').innerHTML=html;$('veil').classList.add('sho
 function closeVeil(){$('veil').classList.remove('show')}
 $('veil').addEventListener('click',e=>{if(e.target.id==='veil')closeVeil()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeVeil()});
+
+/* ---- 自定义确认弹窗（替代原生 confirm，走 veil 模态，返回 Promise<boolean>） ---- */
+function confirmDlg(o){
+  o=o||{};
+  return new Promise(res=>{
+    openVeil(`<h2>${esc(o.title||'请确认')}</h2><div class="step" style="white-space:pre-line;font-size:13.5px">${esc(o.msg||'')}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="ghost" id="cfCancel">取消</button>
+        <button id="cfOk" class="${o.danger?'danger-solid':''}">${esc(o.ok||'确定')}</button></div>`);
+    const done=v=>{closeVeil();res(v)};
+    $('cfCancel').onclick=()=>done(false);
+    $('cfOk').onclick=()=>done(true);
+  });
+}
 
 /* ---- 主题 ---- */
 function applyTheme(){document.documentElement.dataset.theme=localStorage.getItem('wb_theme')||'dark'}
@@ -656,7 +676,8 @@ async function accBalance(id){
   }catch(e){toast(e.message,'err')}
 }
 async function accDisable(id){
-  if(!confirm('停用账号 '+id+'？\n停用后不再参与选号，但签到/保活等维护任务照常，可随时启用。'))return;
+  const ok=await confirmDlg({title:'停用账号',msg:'停用账号 '+id+'？\n停用后不再参与选号，但签到/保活等维护任务照常，可随时启用。',ok:'停用',danger:true});
+  if(!ok)return;
   try{await api('/panel/api/accounts/'+encodeURIComponent(id)+'/disable',{method:'POST'});toast('已停用','ok');vAccounts()}
   catch(e){toast(e.message,'err')}
 }
@@ -665,18 +686,21 @@ async function accEnable(id){
   catch(e){toast(e.message,'err')}
 }
 async function accRemove(id){
-  if(!confirm('删除账号 '+id+'？\n将移出账号池并删除凭证文件，无法恢复！'))return;
+  const ok=await confirmDlg({title:'删除账号',msg:'删除账号 '+id+'？\n将移出账号池并删除凭证文件，无法恢复！',ok:'删除',danger:true});
+  if(!ok)return;
   try{await api('/panel/api/accounts/'+encodeURIComponent(id),{method:'DELETE'});toast('已删除','ok');vAccounts()}
   catch(e){toast(e.message,'err')}
 }
 /* ---- 概览：一键签到全部 / 刷新全部余额 ---- */
 async function checkinAll(){
-  if(!confirm('对全部账号执行签到？\n账号间自动错峰 2–5 秒，任务在后台异步执行。'))return;
+  const ok=await confirmDlg({title:'一键签到全部',msg:'对全部账号执行签到？\n账号间自动错峰 2–5 秒，任务在后台异步执行。',ok:'开始签到'});
+  if(!ok)return;
   try{await api('/panel/api/checkin_all',{method:'POST'});toast('全量签到已触发，后台执行中','ok')}
   catch(e){toast(e.message,'err')}
 }
 async function balanceAll(){
-  if(!confirm('刷新全部账号余额？\n逐个查询上游，账号间间隔 2 秒，账号多时需要一点时间。'))return;
+  const ok=await confirmDlg({title:'刷新全部余额',msg:'刷新全部账号余额？\n逐个查询上游，账号间间隔 2 秒，账号多时需要一点时间。',ok:'开始刷新'});
+  if(!ok)return;
   try{
     toast('刷新中…');
     const j=await api('/panel/api/balance_all',{method:'POST'});
@@ -797,7 +821,8 @@ async function vCheckin(){
 }
 async function runTask(name){
   const meta=TASK_META[name]||[name,''];
-  if(!confirm(`手动补跑「${meta[0]}」？会真实调用上游接口。`))return;
+  const ok=await confirmDlg({title:'手动补跑',msg:`手动补跑「${meta[0]}」？\n会真实调用上游接口。`,ok:'补跑'});
+  if(!ok)return;
   try{await api('/panel/api/tasks/'+encodeURIComponent(name)+'/run',{method:'POST'});toast('任务已触发：'+name,'ok')}
   catch(e){toast(e.message,'err')}
 }
@@ -844,7 +869,8 @@ function copyPlain(){
   else toast('请手动复制','err');
 }
 async function delKey(id){
-  if(!confirm('删除子钥匙 '+id+'？\n删除后该钥匙立即失效，无法恢复。'))return;
+  const ok=await confirmDlg({title:'删除子钥匙',msg:'删除子钥匙 '+id+'？\n删除后该钥匙立即失效，无法恢复。',ok:'删除',danger:true});
+  if(!ok)return;
   try{await api('/panel/api/keys/'+encodeURIComponent(id),{method:'DELETE'});vKeys();toast('已删除','ok')}
   catch(e){toast(e.message,'err')}
 }
