@@ -100,7 +100,7 @@ async function primeOverview() {
     const credits = Number(a.credit_total || 0);
     return {
       uid: a.id || a.uid,
-      nickname: '',
+      nickname: a.nickname || '',
       realm: a.region === 'intl' ? 'global' : 'cn',
       enterprise: false,
       disabled: !!a.disabled,
@@ -481,13 +481,9 @@ $('btnKey').onclick = async () => {
 $('keyInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('btnKey').click(); });
 
 /* ── 路由 ─────────────────────────────────────────────────────────── */
-/* 积分包明细共享缓存：「积分构成」视图与首页「积分到期提醒」卡片共用同一份
-   /panel/api/packages 数据（逐账号实时查上游，能省一次是一次）。声明在路由区
-   是因为 go() 的初始调用就会触发首页卡片的渲染，必须先于它就位。 */
+/* 积分包明细共享缓存：「积分构成」视图用（逐账号实时查上游，能省一次是一次）。 */
 let lastPackages = null;
 let lastPackagesAt = 0;
-let expFetching = false;                       // 到期卡片在途标记（防重复打上游）
-const EXP_FRESH_MS = 2 * 60 * 1000;            // 缓存新鲜窗口：2 分钟内复用
 
 const TITLES = { accounts: '账号池', usage: '用量', checkin: '签到任务', tasks: '任务中心', keys: '子钥匙', packages: '积分构成', models: '模型目录', config: '配置', logs: '运行日志' };
 function go(v) {
@@ -503,9 +499,6 @@ function go(v) {
   if (v === 'tasks') reattachQueueView();
   if (v === 'config') loadConfig();
   if (v === 'logs') loadLogs();
-  // 到期提醒卡片：默认可见，进页面即用 overview 快照渲染（零上游请求，随首页统计
-  // 每轮刷新）。不再「打开账号池就打上游」——逐账号实时查在账号多时会卡死面板。
-  // 完整逐包明细由卡片上的「检查」按钮显式触发（loadPackages/loadExpiry）。
 }
 document.querySelectorAll('.nav a').forEach(a => a.onclick = e => { e.preventDefault(); go(a.dataset.view); history.replaceState(null, '', '#' + a.dataset.view); });
 /* 首次进入延到本轮脚本求值之后再 go()。
@@ -667,9 +660,6 @@ async function loadOverview(quiet) {
     $('subMeta').textContent = '运行 ' + (up >= 86400 ? Math.floor(up / 86400) + ' 天 ' : '') + Math.floor(up % 86400 / 3600) + ' 时 ' + Math.floor(up % 3600 / 60) + ' 分';
     renderAccounts(d.accounts || []);
     renderModelLocks(d.model_locks);
-    // 到期卡片跟随首页统计同步刷新（用同一份响应里的到期快照，不额外发请求）。
-    // 已有逐包明细缓存时不再覆盖——明细信息量更大，别把它降级成快照。
-    if ($('expBox') && !lastPackages) renderExpirySnapshot(d);
   } catch (e) { if (!quiet) toast(e.message, 'err'); }
 }
 
@@ -2974,172 +2964,6 @@ async function loadPackages(force) {
   }
 }
 
-/* ── 积分到期提醒（首页卡片）────────────────────────────────────────── */
-/* 积分不是永久的：签到/任务发的裂变包约一个月失效。只看「剩余积分 ÷ 日消耗」
-   会系统性偏乐观——用不完的部分到期直接蒸发。这里把「最近要过期的是哪批、
-   有多少、到期前每天要至少消耗多少」顶到首页，数据源与「积分构成」共用
-   （lastPackages 缓存，EXP_FRESH_MS 内复用，不重复打上游）。 */
-
-// expBatches 把某账号的包聚合成「到期日 → 该日作废积分」升序列表。
-// 只统计 remain>0 且有到期时间的包——没余额/长期包到期没有任何影响。
-function expBatches(packs) {
-  const byDay = new Map();
-  for (const p of packs || []) {
-    const r = Number(p.remain || 0);
-    const t = (p.end_time || '').slice(0, 10);
-    if (r <= 0 || !t) continue;
-    byDay.set(t, (byDay.get(t) || 0) + r);
-  }
-  return [...byDay.entries()]
-    .map(([date, remain]) => ({ date, remain }))
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
-}
-
-function expDaysLeft(dateStr, today) {
-  return Math.round((new Date(dateStr + 'T00:00:00') - today) / 86400000);
-}
-
-function renderExpiry(d) {
-  const list = (d.accounts || []);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  // 按「最近到期」升序排（issue #125）。
-  //
-  // 后端 /panel/api/packages 是按**余额降序**返回的，恰好把 CN 账号都排在前面、
-  // global 排在末尾，看起来像"按域分组"，其实只是余额顺序。这里再排一次，让
-  // "最快过期的排最前"这个唯一重要的顺序成立，且不分域。
-  //
-  // 排序键用最早到期批次的日期（expBatches 已按日期升序，故 [0] 即最早）。
-  // 查询失败的账号、以及 7 天内无到期的账号没有可比较的到期时间，统一排在最后，
-  // 保持它们原本的相对顺序（稳定排序）。
-  const keyed = list.map(a => {
-    let key = null;
-    if (!a.error) {
-      const bs = expBatches(a.packages).filter(b => expDaysLeft(b.date, today) >= 0);
-      if (bs.length) key = bs[0].date;
-    }
-    return { a, key };
-  });
-  keyed.sort((x, y) => {
-    if (x.key === y.key) return 0;
-    if (x.key === null) return 1;
-    if (y.key === null) return -1;
-    return x.key < y.key ? -1 : 1;
-  });
-  const rows = keyed.map(({ a }) => {
-    if (a.error) {
-      return '<div class="exp-row"><span class="exp-dot" style="background:var(--ink-3)"></span>' +
-        '<span class="exp-nm">' + esc(a.nickname || a.uid.slice(0, 8)) + '</span>' +
-        '<span class="exp-main err">查询失败：' + esc(a.error) + '</span></div>';
-    }
-    const bs = expBatches(a.packages).filter(b => expDaysLeft(b.date, today) >= 0);
-    if (!bs.length) {
-      return '<div class="exp-row"><span class="exp-dot" style="background:var(--ok)"></span>' +
-        '<span class="exp-nm">' + esc(a.nickname || a.uid.slice(0, 8)) + '</span>' +
-        '<span class="exp-main">7 天内无到期积分</span></div>';
-    }
-    const first = bs[0];
-    const days = expDaysLeft(first.date, today);
-    const daily = Math.ceil(first.remain / Math.max(1, days));
-    const week = bs.filter(b => expDaysLeft(b.date, today) <= 7)
-      .reduce((s, b) => s + b.remain, 0);
-    // 危险度：≤3 天红（不抓紧就真没了）、≤7 天琥珀、更远绿。
-    // 上游扣包是 FEFO（按失效时刻升序，实测两号口径一致）：这些快过期批次正是
-    // 被消耗得最快的，日均需耗给的是「哪怕单靠这个账号的自然流量也能对齐」的参照。
-    const cls = days <= 3 ? 'var(--bad)' : days <= 7 ? 'var(--warn)' : 'var(--ok)';
-    const dayWord = days === 0 ? '今天到期' : days === 1 ? '明天到期' : days + ' 天后到期';
-    const more = bs.length > 4 ? '　等 ' + bs.length + ' 批' : '';
-    const rest = bs.slice(1, 4).map(b =>
-      '随后 ' + esc(b.date.slice(5)) + ' · ' + fmtTok(b.remain)).join('　') + more;
-    return '<div class="exp-row"><span class="exp-dot" style="background:' + cls + '"></span>' +
-      '<span class="exp-nm">' + esc(a.nickname || a.uid.slice(0, 8)) + '</span>' +
-      '<span class="exp-main">最近到期 <b>' + esc(first.date) + '</b>（' + dayWord +
-      '）· 该批 <b>' + fmtTok(first.remain) + '</b> 积分 · 到期前日均需耗 ≥<b>' +
-      fmtTok(daily) + '</b>' +
-      (week > first.remain ? ' · 7 天内合计 ' + fmtTok(week) : '') +
-      (rest ? '<div class="note">' + rest + '</div>' : '') +
-      '</span></div>';
-  }).join('');
-  $('expList').innerHTML = rows || '<div class="empty">没有账号</div>';
-  // 数据新鲜度透明化：走缓存时标注年龄，免得把旧数据误当实时。
-  const ageMin = lastPackages ? Math.floor((Date.now() - lastPackagesAt) / 60000) : 0;
-  $('expNote').textContent = (lastPackagesAt && ageMin > 0)
-    ? list.length + ' 个账号 · ' + ageMin + ' 分钟前的数据，可点「检查」刷新'
-    : list.length + ' 个账号 · 实时查询上游';
-  $('expBox').hidden = false;
-}
-
-/* 快照版到期提醒：不查上游，直接用 /overview 已有的 credits_earliest_expiry /
-   credits_earliest_remaining（由签到与余额后台刷新写入 state.json，默认每 5 分钟
-   更新一次）。打开面板即可看到「最近哪批要过期」，成本与首页统计条相同为零。
-
-   与 renderExpiry（逐包明细版）的差异：这里只有**最早一批**的日期与数量，没有
-   后续批次、也没法算「7 天内合计」——那是 packages 接口才有的信息。因此卡片上
-   保留「检查」按钮作为增强入口，用户想要完整明细再显式触发一次上游查询。 */
-function renderExpirySnapshot(d) {
-  const list = (d && d.accounts) || [];
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const keyed = list.map(a => {
-    // 后端给的是 RFC3339 带时区；无到期信息（长期包/未刷新）的账号排在最后。
-    let key = null, ms = 0;
-    if (a.credits_earliest_expiry) {
-      const t = new Date(a.credits_earliest_expiry);
-      if (!isNaN(t.getTime())) { ms = t.getTime(); key = ms; }
-    }
-    return { a, key, ms };
-  });
-  keyed.sort((x, y) => {
-    if (x.key === null && y.key === null) return 0;
-    if (x.key === null) return 1;
-    if (y.key === null) return -1;
-    return x.key - y.key;
-  });
-  const rows = keyed.map(({ a, ms }) => {
-    const nm = esc(a.nickname || String(a.uid || '').slice(0, 8));
-    if (!ms || !a.credits_earliest_remaining) {
-      return '<div class="exp-row"><span class="exp-dot" style="background:var(--ok)"></span>' +
-        '<span class="exp-nm">' + nm + '</span>' +
-        '<span class="exp-main">无近期到期批次</span></div>';
-    }
-    const days = Math.max(0, Math.ceil((ms - today.getTime()) / 86400000));
-    const remain = Number(a.credits_earliest_remaining || 0);
-    const daily = Math.ceil(remain / Math.max(1, days));
-    const cls = days <= 3 ? 'var(--bad)' : days <= 7 ? 'var(--warn)' : 'var(--ok)';
-    const dayWord = days === 0 ? '今天到期' : days === 1 ? '明天到期' : days + ' 天后到期';
-    const when = new Date(ms).toISOString().slice(0, 10);
-    return '<div class="exp-row"><span class="exp-dot" style="background:' + cls + '"></span>' +
-      '<span class="exp-nm">' + nm + '</span>' +
-      '<span class="exp-main">最近到期 <b>' + esc(when) + '</b>（' + dayWord +
-      '）· 该批 <b>' + fmtTok(remain) + '</b> 积分 · 到期前日均需耗 ≥<b>' +
-      fmtTok(daily) + '</b>' +
-      '<div class="note">仅最早一批，点「检查」看全部到期批次</div>' +
-      '</span></div>';
-  }).join('');
-  $('expList').innerHTML = rows || '<div class="empty">没有账号</div>';
-  $('expNote').textContent = list.length + ' 个账号 · 快照（来自本地状态，点「检查」拉实时明细）';
-  $('expBox').hidden = false;
-}
-
-async function loadExpiry(force) {
-  if (!$('expBox')) return;
-  if (expFetching) return;
-  const fresh = lastPackages && (Date.now() - lastPackagesAt) < EXP_FRESH_MS;
-  if (fresh && !force) { renderExpiry(lastPackages); return; }
-  expFetching = true;
-  $('expBox').hidden = false;
-  if (!$('expList').children.length) $('expList').innerHTML = '<div class="empty">查询中…（逐账号向上游实时查询）</div>';
-  $('expNote').textContent = '查询中…';
-  try {
-    const d = await primePackages();
-    lastPackages = d;                            // 与「积分构成」视图共用同一份缓存
-    lastPackagesAt = Date.now();
-    renderExpiry(d);
-  } catch (e) {
-    $('expNote').textContent = '查询失败：' + esc(e.message);
-  }
-  expFetching = false;
-}
-
-if ($('btnExp')) $('btnExp').onclick = () => loadExpiry(true);
 
 // 「刷新」始终实时查（显式 force，不依赖事件对象真值）
 if ($('btnPk')) $('btnPk').onclick = () => loadPackages(true);

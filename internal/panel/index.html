@@ -575,17 +575,6 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
 
   /* 用量统计条已改用 .kpis（见「用量视图」段），此处不再保留 .stats.compact 变体。 */
 
-  /* 到期提醒卡片（首页）：每账号一行，色点=危险度，正文数字用 mono 对齐。 */
-  .exp-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0;
-    font-size: 12.5px; }
-  .exp-row + .exp-row { border-top: 1px solid var(--line-soft); }
-  .exp-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; flex: none; }
-  .exp-nm { font-weight: 600; flex: none; min-width: 9em; }
-  .exp-main { color: var(--ink-2, inherit); }
-  .exp-main b { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-  .exp-main .note { margin-top: 2px; font-size: 11px; color: var(--ink-3); }
-  .exp-main.err { color: var(--bad); }
-
 </style>
 </head>
 <body>
@@ -655,18 +644,6 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
         <div class="stat"><div class="v" id="sSticky">-</div><div class="k">粘性会话</div></div>
       </div>
 
-      <!-- 卡片默认可见：此前 hidden + 「仅点检查才渲染」形成死锁（按钮藏在隐藏卡片里，
-           用户看不到也就点不到，issue #137）。现在进页面即用 /overview 的到期快照渲染
-           （数据来自 state.json，不经上游），「检查」按钮改为拉取逐包明细的增强入口。 -->
-      <div class="box" id="expBox">
-        <header>
-          <h3>积分到期提醒<span class="hint">按最近到期批次估算 · 日均需耗 = 批次剩余 ÷ 距到期天数 · 上游按失效时刻先后自动优先扣减（FEFO）</span></h3>
-          <span class="grow"></span>
-          <span class="note" id="expNote"></span>
-          <button class="xs" id="btnExp">检查</button>
-        </header>
-        <div class="pad"><div id="expList"></div></div>
-      </div>
 
       <div class="box">
         <header>

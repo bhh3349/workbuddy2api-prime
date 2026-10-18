@@ -228,7 +228,6 @@ func (p *Panel) pollDeviceFlow(deviceCode string) (done bool, acct *types.Accoun
 	if uid == "" {
 		return false, nil, fmt.Errorf("已授权但未取到 uid，请重试")
 	}
-	_ = nickname
 	region := "cn"
 	if sess.realm == "global" {
 		region = "intl"
@@ -236,6 +235,7 @@ func (p *Panel) pollDeviceFlow(deviceCode string) (done bool, acct *types.Accoun
 	account := &types.Account{
 		ID:                uid,
 		UID:               uid,
+		Nickname:          nickname,
 		Region:            region,
 		AccessToken:       tok.AccessToken,
 		RefreshToken:      tok.RefreshToken,
@@ -284,6 +284,7 @@ func (p *Panel) importToken(accessToken, refreshToken, uid, region string) (*typ
 	} else {
 		region = "cn"
 	}
+	nickname := ""
 	if uid == "" {
 		// 尝试用 token 反查 uid（hub 做法：GET {origin}/console/account + Bearer）。
 		_, origin := realmUpstream(mapRegionToRealm(region))
@@ -301,6 +302,7 @@ func (p *Panel) importToken(accessToken, refreshToken, uid, region string) (*typ
 			}
 			if json.Unmarshal(raw, &prof) == nil && prof.UID != "" {
 				uid = prof.UID
+				nickname = prof.Nickname
 			}
 		}
 	}
@@ -310,6 +312,7 @@ func (p *Panel) importToken(accessToken, refreshToken, uid, region string) (*typ
 	account := &types.Account{
 		ID:                uid,
 		UID:               uid,
+		Nickname:          nickname,
 		Region:            region,
 		AccessToken:       accessToken,
 		RefreshToken:      refreshToken,

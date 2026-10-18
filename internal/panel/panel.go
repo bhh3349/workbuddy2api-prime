@@ -191,6 +191,7 @@ func (p *Panel) handleModelsRefresh(w http.ResponseWriter, r *http.Request) {
 type accountView struct {
 	ID              string  `json:"id"`
 	UID             string  `json:"uid"`
+	Nickname        string  `json:"nickname,omitempty"`
 	Region          string  `json:"region"`
 	Disabled        bool    `json:"disabled"`
 	Paused          bool    `json:"paused"`
@@ -232,6 +233,7 @@ func (p *Panel) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		v := accountView{
 			ID:              a.ID,
 			UID:             a.UID,
+			Nickname:        a.Nickname,
 			Region:          a.Region,
 			Disabled:        a.Disabled,
 			Paused:          a.Paused,
