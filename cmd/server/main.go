@@ -148,6 +148,39 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+// promoLabelCode 把中文优惠标签映射为 ASCII 安全的英文编码。
+// /v1/models 的 promo_label 可能被 agent 拿去做 HTTP header 值，中文会触发
+// "Cannot convert argument to a ByteString" 错误。
+func promoLabelCode(label string) string {
+	switch label {
+	case "限时免费", "Free now":
+		return "free"
+	case "独家限免":
+		return "exclusive_free"
+	case "夜间折扣":
+		return "night_discount"
+	case "错峰使用":
+		return "off_peak"
+	default:
+		// 未知标签：转小写+下划线，保底 ASCII 安全
+		out := make([]byte, 0, len(label))
+		for _, r := range label {
+			switch {
+			case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+				out = append(out, byte(r))
+			case r >= 'A' && r <= 'Z':
+				out = append(out, byte(r+('a'-'A')))
+			case r == ' ', r == '-', r == '_':
+				out = append(out, '_')
+			}
+		}
+		if len(out) == 0 {
+			return "promo"
+		}
+		return string(out)
+	}
+}
+
 func main() {
 	// 日志同时 tee 到内存环形缓冲，供面板「运行日志」视图查询。
 	log.SetOutput(io.MultiWriter(os.Stderr, logbuf.Writer()))
@@ -229,7 +262,9 @@ func main() {
 			if p, ok := activePromo[e.ID]; ok {
 				group = "discount"
 				if p.Badge != nil {
-					label = p.Badge.Label
+					// promo_label 只给 ASCII 安全的英文编码：agent 可能拿去做 header 值，
+					// 中文会导致 "Cannot convert argument to a ByteString"。
+					label = promoLabelCode(p.Badge.Label)
 				}
 			}
 			out = append(out, protocol.ModelInfo{
