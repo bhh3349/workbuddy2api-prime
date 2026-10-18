@@ -25,6 +25,9 @@ import (
 //go:embed index.html
 var indexHTML []byte
 
+//go:embed app.js
+var appJS []byte
+
 // Panel 聚合各后端模块，为面板 API 提供数据。
 type Panel struct {
 	pool   *pool.Pool
@@ -37,18 +40,19 @@ type Panel struct {
 	adminKey string       // 当前管理员密钥（SetAdminKey 设置，供 SetupNeeded 判断）
 	devices  *deviceStore // 进行中的设备授权会话
 	billing  *upstream.Billing
-	startedAt time.Time // 进程启动时间（overview.uptime_sec 用）
 }
 
 // New 创建 Panel。各参数可为 nil（对应接口返回空数据），但正常使用应全传。
 func New(p *pool.Pool, sched *scheduler.Scheduler, ledger *billing.Ledger, keys *apikeys.Store, auth *auth.Store) *Panel {
-	return &Panel{pool: p, sched: sched, ledger: ledger, keys: keys, auth: auth, billing: upstream.NewBilling(), startedAt: time.Now()}
+	return &Panel{pool: p, sched: sched, ledger: ledger, keys: keys, auth: auth, billing: upstream.NewBilling()}
 }
 
 // RegisterRoutes 把面板页面与 API 挂到 mux 上。
 func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /panel/", p.serveIndex)
+	mux.HandleFunc("GET /panel/app.js", p.serveAppJS)
 	mux.HandleFunc("GET /panel/api/accounts", p.handleAccounts)
+	mux.HandleFunc("GET /panel/api/usage", p.handleUsage)
 	mux.HandleFunc("GET /panel/api/usage/series", p.handleUsageSeries)
 	mux.HandleFunc("GET /panel/api/usage/recent", p.handleUsageRecent)
 	mux.HandleFunc("GET /panel/api/checkin", p.handleCheckin)
@@ -67,15 +71,54 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /panel/api/accounts/{uid}", p.handleAccountRemove)
 	mux.HandleFunc("POST /panel/api/checkin_all", p.handleCheckinAll)
 	mux.HandleFunc("POST /panel/api/balance_all", p.handleBalanceAll)
-	// linguo 前端兼容层（index.html/app.js 直接套用，接口形态见 linguo_compat.go）。
-	// 注意：GET /panel/api/usage 已改为 linguo 形态（旧自研前端已下线，无其他调用方）。
-	p.registerLinguoCompat(mux)
+	mux.HandleFunc("POST /panel/api/keepalive_all", p.handleKeepaliveAll)
 }
 
 // serveIndex 返回单页 HTML。
 func (p *Panel) serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(indexHTML)
+}
+
+// serveAppJS 返回前端脚本（1 小时缓存）。
+func (p *Panel) serveAppJS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Write(appJS)
+}
+
+// handleUsage 返回用量聚合（billing.Summary 原生形态）。
+// 参数：key（子钥匙过滤）、hours（默认 24）。
+func (p *Panel) handleUsage(w http.ResponseWriter, r *http.Request) {
+	if p.ledger == nil {
+		writeJSON(w, billing.Summary{})
+		return
+	}
+	hours := 24
+	if h := r.URL.Query().Get("hours"); h != "" {
+		if n, err := strconv.Atoi(h); err == nil && n >= 0 && n <= 24*30 {
+			hours = n
+		}
+	}
+	sum, err := p.ledger.Query(r.URL.Query().Get("key"), time.Now().Add(-time.Duration(hours)*time.Hour))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "查询用量失败: "+err.Error())
+		return
+	}
+	writeJSON(w, sum)
+}
+
+// handleKeepaliveAll 手动触发全量保活。
+func (p *Panel) handleKeepaliveAll(w http.ResponseWriter, r *http.Request) {
+	if p.sched == nil {
+		writeError(w, http.StatusServiceUnavailable, "scheduler 未初始化")
+		return
+	}
+	if err := p.sched.TriggerNow("keepalive"); err != nil {
+		writeError(w, http.StatusBadRequest, "触发失败: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "started": true})
 }
 
 // accountView 是账号行视图：基础信息 + 运行态快照合并。

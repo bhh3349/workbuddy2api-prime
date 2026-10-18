@@ -50,6 +50,149 @@ async function api(path, opts = {}) {
   if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
   return d;
 }
+
+/* ── prime 原生接口适配 ─────────────────────────────────────────────
+   后端是 workbuddy2api-prime 自己的原生接口（/panel/api/accounts、
+   /panel/api/usage 系列、/panel/api/accounts/device/* 等），本节把原生
+   返回映射为渲染层需要的字段。渲染代码本身不动；接口变化时只改这里的
+   映射和下面的 api() 调用点。 */
+
+/* primeHours：把用量时间控件的参数（from/to 秒时间戳或 hours）折成原生接口的 hours。
+   全部历史（hours=0）按 30 天（原生上限）查。 */
+function primeHours(q) {
+  const hv = q.get('hours');
+  if (hv != null) {
+    const n = parseInt(hv, 10);
+    return (!n || n <= 0) ? 720 : Math.min(n, 720);
+  }
+  const from = parseInt(q.get('from') || '0', 10), to = parseInt(q.get('to') || '0', 10);
+  if (from > 0 && to > from) return Math.min(720, Math.max(1, Math.ceil((to - from) / 3600)));
+  if (from > 0) return Math.min(720, Math.max(1, Math.ceil(Date.now() / 1000 - from) / 3600));
+  return 72;
+}
+
+/* localHourKey：把 ISO 时间转成本地 "YYYY-MM-DDTHH"（用量图表 parsePointTime 口径）。 */
+function localHourKey(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const p2 = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + 'T' + p2(d.getHours());
+}
+
+/* primeOverview：原生 /panel/api/accounts + /panel/api/checkin → 概览形态。
+   原生账号字段：id/uid/region/disabled/credit_total/credit_expires_at/weight/
+   fails/soft_streak/cooldown_until/degrade_until/ema_cost/last_pick */
+async function primeOverview() {
+  const [accs, hist] = await Promise.all([
+    api('accounts'),
+    api('checkin').catch(() => []),
+  ]);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const doneSet = new Set();
+  for (const h of (hist || [])) {
+    if (h && h.OK && h.AccountID && new Date(h.Time).getTime() >= today.getTime()) doneSet.add(h.AccountID);
+  }
+  const now = Date.now();
+  const accounts = (accs || []).map(a => {
+    const cdMs = a.cooldown_until ? new Date(a.cooldown_until).getTime() - now : 0;
+    const dgMs = a.degrade_until ? new Date(a.degrade_until).getTime() - now : 0;
+    const coolSec = Math.max(0, Math.ceil(Math.max(cdMs, dgMs) / 1000));
+    const credits = Number(a.credit_total || 0);
+    return {
+      uid: a.id || a.uid,
+      nickname: '',
+      realm: a.region === 'intl' ? 'global' : 'cn',
+      enterprise: false,
+      disabled: !!a.disabled,
+      paused: false,
+      credits: credits,
+      credits_total: credits,
+      credits_earliest_expiry: a.credit_expires_at || '',
+      credits_earliest_remaining: credits,
+      checkin_done: doneSet.has(a.id),
+      breaker_until: a.cooldown_until || '',
+      degrade_until: a.degrade_until || '',
+      cool_remaining_sec: coolSec,
+      cool_kind: (a.soft_streak || 0) > 0 ? 'soft' : (coolSec > 0 ? 'hard' : ''),
+      soft_streak: a.soft_streak || 0,
+      rate_limited_models: [],
+      model_costs: a.ema_cost > 0 ? [{ model: 'avg', cost_per_1k: a.ema_cost }] : [],
+      reason: '',
+      in_flight: 0,
+      success_count: 0,
+      err_total: a.fails || 0,
+      token_usage: {},
+      last_success: a.last_pick || '',
+    };
+  });
+  let healthy = 0, cooling = 0, disabled = 0;
+  for (const a of accounts) {
+    if (a.disabled) disabled++;
+    else if (a.cool_remaining_sec > 0) cooling++;
+    else healthy++;
+  }
+  return {
+    version: 'prime', uptime_sec: 0, auth_required: true, redis_mode: 'local',
+    sticky_sessions: 0, in_flight_full: 0,
+    total: accounts.length, healthy: healthy, cooling: cooling, disabled: disabled, paused: 0,
+    accounts: accounts, model_locks: [],
+  };
+}
+
+/* primeUsage：原生 /panel/api/usage + /panel/api/usage/series → 用量视图形态。
+   原生 Summary 无 json tag（大写键）：Requests/PromptTokens/CompletionTokens/TotalCredit；
+   原生 Bucket 小写键：time/requests/credit/prompt_tokens/completion_tokens。 */
+async function primeUsage(q) {
+  const hours = primeHours(q);
+  const nq = new URLSearchParams();
+  nq.set('hours', String(hours));
+  const [sum, series] = await Promise.all([
+    api('usage?' + nq.toString()),
+    api('usage/series?' + nq.toString() + '&buckets=48'),
+  ]);
+  const pt = Number(sum.PromptTokens || 0), ct = Number(sum.CompletionTokens || 0);
+  const reqs = Number(sum.Requests || 0), credits = Number(sum.TotalCredit || 0);
+  const pts = (series || []).map(b => ({
+    t: localHourKey(b.time),
+    prompt_tokens: b.prompt_tokens || 0,
+    completion_tokens: b.completion_tokens || 0,
+    total_tokens: (b.prompt_tokens || 0) + (b.completion_tokens || 0),
+    requests: b.requests || 0,
+  })).filter(p => p.t);
+  return {
+    totals: {
+      total_tokens: pt + ct, prompt_tokens: pt, completion_tokens: ct,
+      requests: reqs, errors: 0, avg_latency_ms: 0,
+      credits: credits, credit_tokens: pt + ct, credit_samples: reqs,
+    },
+    series: pts,
+    credit_by_account: [], credit_by_model: [],
+    by_account: [], by_model: [], by_realm: [],
+    buckets: pts.length,
+  };
+}
+
+/* primePackages：原生 /panel/api/accounts → 积分构成形态。
+   原生只有每账号总额 + 最早到期，合成为单个"剩余额度"包（无逐包明细）。 */
+async function primePackages() {
+  const accs = await api('accounts');
+  const accounts = (accs || []).map(a => {
+    const remain = Number(a.credit_total || 0);
+    const endTime = a.credit_expires_at || '';
+    const ms = endTime ? new Date(endTime).getTime() : 0;
+    return {
+      uid: a.uid || a.id, nickname: '', realm: a.region === 'intl' ? 'global' : 'cn',
+      remain: remain, size: remain,
+      packages: [{
+        name: '剩余额度', remain: remain, used: 0, size: remain,
+        end_time: endTime, expires_at: ms > 0 ? ms : 0,
+      }],
+    };
+  });
+  accounts.sort((x, y) => y.remain - x.remain);
+  return { accounts: accounts };
+}
+
 function toast(msg, cls) {
   const el = document.createElement('div');
   el.className = 'tst ' + (cls || '');
@@ -321,7 +464,7 @@ $('btnKey').onclick = async () => {
   if (!v) return;
   localStorage.setItem(LS_KEY, v);
   try {
-    await api('overview');
+    await api('accounts');
     $('keyErr').hidden = true;
     $('keyVeil').classList.remove('on');
     start();
@@ -483,7 +626,7 @@ function renderModelLocks(rows) {
 
 async function loadOverview(quiet) {
   try {
-    const d = await api('overview');
+    const d = await primeOverview();
     overviewData = d;
     $('sTotal').textContent = d.total;
     $('sHealthy').textContent = d.healthy;
@@ -527,7 +670,7 @@ $('accBody').addEventListener('click', async ev => {
       const r = await api('accounts/' + encodeURIComponent(u) + '/balance', { method: 'POST' });
       toast('余额已更新：' + r.credits + (r.credits_total > 0 ? ' / ' + r.credits_total : ''), 'ok');
     } else if (a === 'revive') {
-      await api('accounts/' + encodeURIComponent(u) + '/revive', { method: 'POST' });
+      await api('accounts/' + encodeURIComponent(u) + '/enable', { method: 'POST' });
       toast('已解冻', 'ok');
     } else if (a === 'disable') {
       await api('accounts/' + encodeURIComponent(u) + '/disable', { method: 'POST' });
@@ -541,7 +684,7 @@ $('accBody').addEventListener('click', async ev => {
     } else if (a === 'tasks') {
       openTasks(u);
     } else if (a === 'remove') {
-      const r = await api('accounts/' + encodeURIComponent(u) + '/remove', { method: 'POST' });
+      const r = await api('accounts/' + encodeURIComponent(u), { method: 'DELETE' });
       toast(r.file_error ? '已移除（凭证文件删除失败：' + r.file_error + '）' : '已移除', 'ok');
     }
   } catch (e) { toast(e.message, 'err'); }
@@ -1129,9 +1272,9 @@ function startAddLogin() {
   const realm = (document.querySelector('input[name="addRealm"]:checked') || {}).value || 'cn';
   $('btnStartLogin').disabled = true;
   $('addLoad').hidden = false; $('addErr').hidden = true;
-  api('login/start', { method: 'POST', body: JSON.stringify({ realm }) }).then(r => {
-    loginState = r.state;
-    $('addUrl').textContent = r.url;
+  api('accounts/device/start', { method: 'POST', body: JSON.stringify({ realm }) }).then(r => {
+    loginState = r.device_code;
+    $('addUrl').textContent = r.auth_url;
     $('addPick').hidden = true; // 选域锁定（会话已按该域发起）
     $('addLoad').hidden = true; $('addReady').hidden = false;
     $('btnStartLogin').hidden = true;
@@ -1148,12 +1291,14 @@ function stopPoll() { if (loginTimer) { clearInterval(loginTimer); loginTimer = 
 async function pollLogin() {
   if (!loginState) return;
   try {
-    const r = await api('login/poll?state=' + encodeURIComponent(loginState));
+    const r = await api('accounts/device/poll?device_code=' + encodeURIComponent(loginState));
     if (r.done) {
       stopPoll();
       $('addReady').hidden = true;
       $('addDone').hidden = false;
-      $('addDone').textContent = '已添加 ' + (r.nickname || r.uid) + (r.realm === 'global' ? '（国际版）' : '') + (r.credits >= 0 ? ' · 积分 ' + r.credits + (r.credits_total > 0 ? '/' + r.credits_total : '') : '') + '，账号已载入池中';
+      const au = (r.account && r.account.uid) || '';
+      const rg = (r.account && r.account.region) || '';
+      $('addDone').textContent = '已添加 ' + au + (rg === 'intl' ? '（国际版）' : '') + (r.credits >= 0 ? ' · 积分 ' + r.credits : '') + (r.balance_error ? '（余额拉取失败：' + r.balance_error + '）' : '') + '，账号已载入池中';
       setTimeout(() => { closeAdd(); loadOverview(true); }, 1600);
     }
   } catch (e) {
@@ -1169,24 +1314,32 @@ $('btnStartLogin').onclick = startAddLogin;
 $('btnOpenUrl').onclick = () => open($('addUrl').textContent, '_blank');
 $('btnCopyUrl').onclick = () => navigator.clipboard.writeText($('addUrl').textContent)
   .then(() => toast('链接已复制', 'ok'), () => toast('复制失败，请手动选择复制', 'err'));
+/* 导入 JSON：读取文件（cockpit 数组或单个账号对象均可），逐个调原生
+   /panel/api/accounts/import（{access_token,refresh_token,uid,region}）。 */
 $('importFile').onchange = async () => {
   const file = $('importFile').files[0];
   if (!file) return;
   $('importDone').hidden = true; $('importErr').hidden = true;
-  const fd = new FormData();
-  fd.append('file', file);
-  const h = {};
-  const k = localStorage.getItem(LS_KEY);
-  if (k) h['Authorization'] = 'Bearer ' + k;
   try {
-    const r = await fetch('/panel/api/import/cockpit', { method: 'POST', body: fd, headers: h });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-    $('importDone').hidden = false;
-    $('importDone').textContent = '导入完成：成功 ' + d.imported + ' 个' + (d.skipped ? '，跳过 ' + d.skipped + ' 个' : '');
-    if (d.errors && d.errors.length) {
-      console.warn('import errors:', d.errors);
+    const text = await file.text();
+    let arr;
+    try { arr = JSON.parse(text); } catch (e) { throw new Error('文件不是合法 JSON'); }
+    if (!Array.isArray(arr)) arr = [arr];
+    let imported = 0, skipped = 0;
+    for (const item of arr) {
+      const body = {
+        access_token: item.access_token || item.accessToken || '',
+        refresh_token: item.refresh_token || item.refreshToken || '',
+        uid: item.uid || '',
+        region: /workbuddy\.ai/i.test(item.domain || '') ? 'intl' : 'cn',
+      };
+      try {
+        await api('accounts/import', { method: 'POST', body: JSON.stringify(body) });
+        imported++;
+      } catch (e) { skipped++; console.warn('import skipped:', e.message); }
     }
+    $('importDone').hidden = false;
+    $('importDone').textContent = '导入完成：成功 ' + imported + ' 个' + (skipped ? '，跳过 ' + skipped + ' 个' : '');
     loadOverview(true);
   } catch (e) {
     $('importErr').hidden = false;
@@ -1222,7 +1375,7 @@ function start() {
   checkAuthGate();
 }
 async function checkAuthGate() {
-  try { await api('overview'); }
+  try { await api('accounts'); }
   catch (e) { if (String(e.message).includes('密钥') || String(e.message).includes('api_key')) return; }
 }
 start();
@@ -2278,22 +2431,10 @@ function renderUsageChart(series) {
 
 function fmtTokTip(v) { return fmtTok(v); }
 
-let usageRateWarmAt = 0;
-async function warmUsageModelRates() {
-  if (Date.now() - usageRateWarmAt < 10 * 60 * 1000) return;
-  try {
-    await api('models');
-  } catch (e) {
-    // 倍率回填是可选增强；失败不阻塞用量统计，10 分钟后再试。
-  }
-  usageRateWarmAt = Date.now();
-}
-
 async function loadUsage() {
   const q = trangeQuery('usRange', true);
   try {
-    await warmUsageModelRates();
-    const d = await api('usage?' + q.toString());
+    const d = await primeUsage(q);
     renderUsage(d);
   } catch (e) {
     // 失败时三块都要清干净：只改图表会留下上一次窗口的数字，看起来像"刷新成功"。
@@ -2749,13 +2890,10 @@ async function loadPackages(force) {
   $('pkDetail').innerHTML = '';
   $('pkExpiry').innerHTML = '<div class="pk-expiry-empty">查询中…</div>';
   try {
-    const [d, c] = await Promise.all([
-      api('packages'),
-      api('config').catch(() => null),
-    ]);
+    const d = await primePackages();
     lastPackages = d;                            // 缓存供首页到期卡片与排序切换复用
     lastPackagesAt = Date.now();
-    lastDetailLimit = pkDetailLimit(c && c.config);
+    lastDetailLimit = PK_DEFAULT_DETAIL_LIMIT;
     renderPackages(d, lastDetailLimit);
   } catch (e) {
     $('pkSummary').innerHTML = '<div class="empty">读取失败：' + esc(e.message) + '</div>';
@@ -2918,7 +3056,7 @@ async function loadExpiry(force) {
   if (!$('expList').children.length) $('expList').innerHTML = '<div class="empty">查询中…（逐账号向上游实时查询）</div>';
   $('expNote').textContent = '查询中…';
   try {
-    const d = await api('packages');
+    const d = await primePackages();
     lastPackages = d;                            // 与「积分构成」视图共用同一份缓存
     lastPackagesAt = Date.now();
     renderExpiry(d);
