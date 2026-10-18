@@ -23,7 +23,8 @@ type ModelInfo struct {
 }
 
 // ModelProvider 提供模型列表（main.go 用闭包接入 scheduler）。
-type ModelProvider func() []ModelInfo
+// 传入 *http.Request 以便读取鉴权 key（按 key 的分组过滤）。
+type ModelProvider func(r *http.Request) []ModelInfo
 
 // openAIModel 是 /v1/models 返回的单个模型对象（OpenAI 格式 + 扩展字段）。
 type openAIModel struct {
@@ -46,7 +47,7 @@ func ModelsHandler(provider ModelProvider) http.HandlerFunc {
 		now := time.Now().Unix()
 		models := []openAIModel{}
 		if provider != nil {
-			for _, m := range provider() {
+			for _, m := range provider(r) {
 				om := openAIModel{
 					ID:      m.ID,
 					Object:  "model",

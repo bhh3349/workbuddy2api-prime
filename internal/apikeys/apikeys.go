@@ -281,6 +281,18 @@ func (s *Store) Get(id string) (*types.APIKey, bool) {
 	return k, ok
 }
 
+// SetModelGroup 设置子钥匙绑定的模型分组（空=不限制）。
+func (s *Store) SetModelGroup(id, groupID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k, ok := s.keys[id]
+	if !ok {
+		return fmt.Errorf("子钥匙不存在")
+	}
+	k.ModelGroupID = groupID
+	return s.flush()
+}
+
 // List 返回全部钥匙（供 Phase 3 面板用）。
 func (s *Store) List() []*types.APIKey {
 	s.mu.RLock()

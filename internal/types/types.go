@@ -91,6 +91,7 @@ type APIKey struct {
 	Quota      float64 // -1 不限
 	Used       float64
 	Models     []string // 模型白名单，空=全部
+	ModelGroupID string   // 绑定的自定义模型分组 ID，空=不限制
 	IPAllow    []string
 	Disabled   bool
 	ExpiresAt  time.Time

@@ -988,6 +988,21 @@ for (const [id, key] of [['mdRealm', 'realm'], ['mdCap', 'cap'], ['mdEffort', 'e
   el.onchange = () => { mdFilter[key] = el.value; renderModels(); };
 }
 if ($('mdReset')) $('mdReset').onclick = resetModelFilter; // prime: 隐藏视图守卫
+// /v1/models 分组开关：切组后接口只返回该组模型（agent 不支持 group 字段时用）。
+(async () => {
+  const sel = $('mdApiGroup');
+  if (!sel) return;
+  try {
+    const d = await api('models/group');
+    if (d && d.group) sel.value = d.group;
+  } catch (e) { /* 忽略 */ }
+  sel.onchange = async () => {
+    try {
+      await api('models/group', { method: 'POST', body: JSON.stringify({ group: sel.value }) });
+      toast('/v1/models 已切换为「' + sel.options[sel.selectedIndex].text + '」', 'ok');
+    } catch (e) { toast('切换失败：' + e.message, 'err'); }
+  };
+})();
 if ($('btnModels')) $('btnModels').onclick = async () => {
   const b = $('btnModels');
   b.disabled = true; const old = b.textContent; b.textContent = '刷新中…';
@@ -3043,13 +3058,19 @@ document.querySelectorAll('[data-taskrun]').forEach(b => { b.onclick = () => run
 async function loadKeys() {
   const tb = $('keysBody');
   if (!tb) return;
-  tb.innerHTML = '<tr><td colspan="8"><div class="empty">读取中…</div></td></tr>';
+  tb.innerHTML = '<tr><td colspan="9"><div class="empty">读取中…</div></td></tr>';
   try {
-    const list = await api('keys');
+    const [list, groups] = await Promise.all([
+      api('keys'),
+      api('model-groups').catch(() => []),
+    ]);
     if (!list.length) {
-      tb.innerHTML = '<tr><td colspan="8"><div class="empty"><div class="big">还没有子钥匙</div>在上方输入名称点「新建子钥匙」，明文只显示一次，复制后分发给调用方</div></td></tr>';
+      tb.innerHTML = '<tr><td colspan="9"><div class="empty"><div class="big">还没有子钥匙</div>在上方输入名称点「新建子钥匙」，明文只显示一次，复制后分发给调用方</div></td></tr>';
       return;
     }
+    const groupOpts = (gid) =>
+      '<option value="">不限制</option>' +
+      (groups || []).map(g => '<option value="' + esc(g.id) + '"' + (g.id === gid ? ' selected' : '') + '>' + esc(g.name) + '（' + (g.models || []).length + '）</option>').join('');
     tb.innerHTML = list.map(k => {
       const models = (k.models || []).join(', ') || '全部模型';
       const exp = k.expires_at ? fmtDT(k.expires_at) : '永不过期';
@@ -3059,11 +3080,21 @@ async function loadKeys() {
         '<td>' + esc(k.name || '—') + '</td>' +
         '<td class="num">' + usage + '</td>' +
         '<td class="dim" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(models) + '">' + esc(models) + '</td>' +
+        '<td><select class="xs" data-keygroup="' + esc(k.id) + '" title="该钥匙的 /v1/models 只返回所选分组的模型">' + groupOpts(k.model_group_id) + '</select></td>' +
         '<td class="num">' + esc(exp) + '</td>' +
         '<td>' + (k.disabled ? '<span class="tag bad">停用</span>' : '<span class="tag ok">启用</span>') + '</td>' +
         '<td><button class="xs danger" data-delkey="' + esc(k.id) + '">删除</button></td></tr>';
     }).join('');
     tb.querySelectorAll('[data-delkey]').forEach(b => { b.onclick = () => delKey(b.dataset.delkey); });
+    tb.querySelectorAll('[data-keygroup]').forEach(sel => {
+      sel.onchange = async () => {
+        const kid = sel.dataset.keygroup;
+        try {
+          await api('keys/' + encodeURIComponent(kid) + '/model-group', { method: 'POST', body: JSON.stringify({ group_id: sel.value }) });
+          toast(sel.value ? '已绑定分组，该钥匙的 /v1/models 只返回组内模型' : '已解绑，恢复全部模型', 'ok');
+        } catch (e) { toast('绑定失败：' + e.message, 'err'); loadKeys(); }
+      };
+    });
   } catch (e) {
     tb.innerHTML = '<tr><td colspan="8"><div class="empty">' + esc(e.message) + '</div></td></tr>';
   }
@@ -3098,3 +3129,134 @@ if ($('btnCopyPlain')) $('btnCopyPlain').onclick = () => {
   else toast('请手动复制', 'err');
 };
 if ($('btnClosePlain')) $('btnClosePlain').onclick = () => $('plainVeil').classList.remove('on');
+
+/* ── 自定义模型分组 ─────────────────────────────────────────────── */
+/* 用户建组命名 → 在模型库勾选模型（可按积分上限筛选）→ 子钥匙绑定分组后，
+   该 key 的 /v1/models 只返回组内模型。 */
+let mgGroups = [];
+let mgEditing = null;  // 正在编辑的分组 id
+let mgCreditLimit = null;
+
+async function mgLoad() {
+  try {
+    mgGroups = await api('model-groups') || [];
+  } catch (e) { mgGroups = []; }
+  mgRenderList();
+}
+
+function mgRenderList() {
+  const box = $('groupList');
+  if (!box) return;
+  if (!mgGroups.length) {
+    box.innerHTML = '<div class="empty">还没有分组，上面输入名称新建一个</div>';
+    return;
+  }
+  box.innerHTML = mgGroups.map(g =>
+    '<div class="mg-row" data-id="' + esc(g.id) + '" style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--line);margin-bottom:6px;cursor:pointer' +
+    (mgEditing === g.id ? ';border-color:var(--primary);background:var(--surface-2)' : '') + '">' +
+    '<b>' + esc(g.name) + '</b>' +
+    '<span class="note">' + (g.models || []).length + ' 个模型</span>' +
+    '<span class="grow"></span>' +
+    '<button class="xs" data-mg="edit">编辑</button>' +
+    '</div>'
+  ).join('');
+  box.querySelectorAll('.mg-row').forEach(row => {
+    row.onclick = (e) => {
+      if (e.target.dataset.mg === 'edit' || !e.target.closest('button')) mgEdit(row.dataset.id);
+    };
+  });
+}
+
+function mgEdit(id) {
+  mgEditing = id;
+  const g = mgGroups.find(x => x.id === id);
+  if (!g) return;
+  $('groupEditor').hidden = false;
+  $('groupEditTitle').textContent = '编辑分组：' + g.name;
+  $('groupNameInput').value = g.name;
+  $('groupCreditFilter').value = '';
+  mgCreditLimit = null;
+  mgRenderModels(g.models || []);
+  mgRenderList();
+  $('groupEditNote').textContent = '';
+}
+
+function mgRenderModels(selected) {
+  const box = $('groupModelList');
+  const sel = new Set(selected || []);
+  // 用模型目录缓存（mdAll），按积分上限过滤
+  let list = (typeof mdAll !== 'undefined' ? mdAll : []);
+  if (mgCreditLimit != null) {
+    list = list.filter(m => {
+      const v = (typeof mdRateValue === 'function') ? mdRateValue(m) : Infinity;
+      return v <= mgCreditLimit;
+    });
+  }
+  if (!list.length) {
+    box.innerHTML = '<div class="empty">没有符合条件的模型</div>';
+    return;
+  }
+  box.innerHTML = list.map(m => {
+    const id = m.id || '';
+    const checked = sel.has(id) ? ' checked' : '';
+    const price = m.credits || '';
+    const realm = m.realm === 'cn' ? 'CN' : m.realm === 'intl' ? 'GL' : '';
+    return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer">' +
+      '<input type="checkbox" data-mid="' + esc(id) + '"' + checked + '>' +
+      '<span style="font-family:var(--mono);font-size:12px">' + esc((realm ? realm + ':' : '') + id) + '</span>' +
+      '<span class="note">' + esc(price) + '</span>' +
+      '</label>';
+  }).join('');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const modal = $('groupModal');
+  if ($('btnGroupMgr')) $('btnGroupMgr').onclick = () => { modal.hidden = false; mgEditing = null; $('groupEditor').hidden = true; mgLoad(); };
+  if ($('btnGroupClose')) $('btnGroupClose').onclick = () => { modal.hidden = true; };
+  if ($('btnGroupCreate')) $('btnGroupCreate').onclick = async () => {
+    const name = $('newGroupName').value.trim();
+    if (!name) { toast('请输入分组名称', 'err'); return; }
+    try {
+      await api('model-groups', { method: 'POST', body: JSON.stringify({ name, models: [] }) });
+      $('newGroupName').value = '';
+      toast('已创建分组', 'ok');
+      mgLoad();
+    } catch (e) { toast('创建失败：' + e.message, 'err'); }
+  };
+  if ($('btnGroupFilter')) $('btnGroupFilter').onclick = () => {
+    const v = $('groupCreditFilter').value.trim();
+    mgCreditLimit = v === '' ? null : parseFloat(v);
+    const g = mgGroups.find(x => x.id === mgEditing);
+    // 保留已勾选的
+    const checked = [...document.querySelectorAll('#groupModelList input:checked')].map(el => el.dataset.mid);
+    const merged = new Set([...(g ? g.models || [] : []), ...checked]);
+    mgRenderModels([...merged]);
+    $('groupEditNote').textContent = mgCreditLimit != null ? '已按积分 ≤ ' + mgCreditLimit + ' 筛选' : '';
+  };
+  if ($('btnGroupSave')) $('btnGroupSave').onclick = async () => {
+    if (!mgEditing) return;
+    const name = $('groupNameInput').value.trim();
+    const models = [...document.querySelectorAll('#groupModelList input:checked')].map(el => el.dataset.mid);
+    // 合并筛选前已选但当前未显示的
+    const g = mgGroups.find(x => x.id === mgEditing);
+    const prev = new Set(g ? g.models || [] : []);
+    const shown = new Set([...document.querySelectorAll('#groupModelList input[data-mid]')].map(el => el.dataset.mid));
+    for (const mid of prev) { if (!shown.has(mid) && !models.includes(mid)) models.push(mid); }
+    try {
+      await api('model-groups/' + encodeURIComponent(mgEditing), { method: 'PUT', body: JSON.stringify({ name, models }) });
+      toast('已保存（' + models.length + ' 个模型）', 'ok');
+      mgLoad();
+      mgEdit(mgEditing);
+    } catch (e) { toast('保存失败：' + e.message, 'err'); }
+  };
+  if ($('btnGroupDelete')) $('btnGroupDelete').onclick = async () => {
+    if (!mgEditing || !confirm('删除该分组？已绑定此分组的子钥匙将恢复为不限制。')) return;
+    try {
+      await api('model-groups/' + encodeURIComponent(mgEditing), { method: 'DELETE' });
+      toast('已删除', 'ok');
+      mgEditing = null;
+      $('groupEditor').hidden = true;
+      mgLoad();
+    } catch (e) { toast('删除失败：' + e.message, 'err'); }
+  };
+});

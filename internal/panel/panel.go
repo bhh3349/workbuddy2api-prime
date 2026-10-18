@@ -17,6 +17,7 @@ import (
 	"workbuddy2api-prime/internal/auth"
 	"workbuddy2api-prime/internal/billing"
 	"workbuddy2api-prime/internal/config"
+	"workbuddy2api-prime/internal/modelgroups"
 	"workbuddy2api-prime/internal/pool"
 	"workbuddy2api-prime/internal/scheduler"
 	"workbuddy2api-prime/internal/types"
@@ -42,6 +43,10 @@ type Panel struct {
 	adminKey string       // 当前管理员密钥（SetAdminKey 设置，供 SetupNeeded 判断）
 	devices  *deviceStore // 进行中的设备授权会话
 	billing  *upstream.Billing
+	groups   *modelgroups.Store
+	// modelsGroup 是 /v1/models 的分组开关：all | discount | full_price。
+	// agent 不理解 group 元数据时，手动切组让接口只返回该组的模型。
+	modelsGroup string
 }
 
 // New 创建 Panel。各参数可为 nil（对应接口返回空数据），但正常使用应全传。
@@ -51,6 +56,31 @@ func New(p *pool.Pool, sched *scheduler.Scheduler, ledger *billing.Ledger, keys 
 
 // SetConfig 注入配置（供配置视图读写）。
 func (p *Panel) SetConfig(c *config.Config) { p.cfg = c }
+
+// SetGroups 注入模型分组存储。
+func (p *Panel) SetGroups(g *modelgroups.Store) { p.groups = g }
+
+// ModelsGroup 返回当前 /v1/models 分组开关（all | discount | full_price）。
+func (p *Panel) ModelsGroup() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.modelsGroup == "" {
+		return "all"
+	}
+	return p.modelsGroup
+}
+
+// SetModelsGroup 设置 /v1/models 分组开关。
+func (p *Panel) SetModelsGroup(g string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch g {
+	case "discount", "full_price":
+		p.modelsGroup = g
+	default:
+		p.modelsGroup = "all"
+	}
+}
 
 // RegisterRoutes 把面板页面与 API 挂到 mux 上。
 func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
@@ -63,6 +93,14 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /panel/api/logs", p.handleLogs)
 	mux.HandleFunc("GET /panel/api/config", p.handleConfigGet)
 	mux.HandleFunc("POST /panel/api/config", p.handleConfigSet)
+	mux.HandleFunc("GET /panel/api/models/group", p.handleModelsGroupGet)
+	mux.HandleFunc("POST /panel/api/models/group", p.handleModelsGroupSet)
+	// 自定义模型分组：建组/改名/勾选模型/删除；子钥匙绑定分组
+	mux.HandleFunc("GET /panel/api/model-groups", p.handleModelGroupsList)
+	mux.HandleFunc("POST /panel/api/model-groups", p.handleModelGroupsCreate)
+	mux.HandleFunc("PUT /panel/api/model-groups/{id}", p.handleModelGroupsUpdate)
+	mux.HandleFunc("DELETE /panel/api/model-groups/{id}", p.handleModelGroupsDelete)
+	mux.HandleFunc("POST /panel/api/keys/{id}/model-group", p.handleKeyModelGroup)
 	mux.HandleFunc("GET /panel/api/checkin", p.handleCheckin)
 	mux.HandleFunc("POST /panel/api/tasks/{name}/run", p.handleTaskRun)
 	mux.HandleFunc("GET /panel/api/keys", p.handleKeysList)
@@ -329,21 +367,22 @@ func (p *Panel) handleTaskRun(w http.ResponseWriter, r *http.Request) {
 
 // keyView 是子钥匙视图（不含 sha256 摘要）。
 type keyView struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Quota      float64  `json:"quota"`
-	Used       float64  `json:"used"`
-	Models     []string `json:"models"`
-	Disabled   bool     `json:"disabled"`
-	ExpiresAt  string   `json:"expires_at"`
-	CreatedAt  string   `json:"created_at"`
-	Concurrent int      `json:"concurrent"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Quota        float64  `json:"quota"`
+	Used         float64  `json:"used"`
+	Models       []string `json:"models"`
+	ModelGroupID string   `json:"model_group_id,omitempty"`
+	Disabled     bool     `json:"disabled"`
+	ExpiresAt    string   `json:"expires_at"`
+	CreatedAt    string   `json:"created_at"`
+	Concurrent   int      `json:"concurrent"`
 }
 
 func toKeyView(k *types.APIKey) keyView {
 	return keyView{
 		ID: k.ID, Name: k.Name, Quota: k.Quota, Used: k.Used,
-		Models: k.Models, Disabled: k.Disabled,
+		Models: k.Models, ModelGroupID: k.ModelGroupID, Disabled: k.Disabled,
 		ExpiresAt: fmtTime(k.ExpiresAt), CreatedAt: fmtTime(k.CreatedAt),
 		Concurrent: k.Concurrent,
 	}

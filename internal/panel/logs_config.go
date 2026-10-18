@@ -82,3 +82,23 @@ func (p *Panel) handleConfigSet(w http.ResponseWriter, r *http.Request) {
 	// TODO: 落盘 config.json（当前仅内存生效，重启丢失）
 	writeJSON(w, map[string]any{"ok": true})
 }
+
+// handleModelsGroupGet: GET /panel/api/models/group
+// 返回 /v1/models 的分组开关（all | discount | full_price）。
+func (p *Panel) handleModelsGroupGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"group": p.ModelsGroup()})
+}
+
+// handleModelsGroupSet: POST /panel/api/models/group {"group": "discount"}
+// 切换 /v1/models 返回的模型分组，立即生效（内存态，重启恢复 all）。
+func (p *Panel) handleModelsGroupSet(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Group string `json:"group"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	p.SetModelsGroup(body.Group)
+	writeJSON(w, map[string]any{"ok": true, "group": p.ModelsGroup()})
+}

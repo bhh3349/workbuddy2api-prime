@@ -19,6 +19,7 @@ import (
 	"workbuddy2api-prime/internal/billing"
 	"workbuddy2api-prime/internal/config"
 	"workbuddy2api-prime/internal/logbuf"
+	"workbuddy2api-prime/internal/modelgroups"
 	"workbuddy2api-prime/internal/panel"
 	"workbuddy2api-prime/internal/pool"
 	"workbuddy2api-prime/internal/protocol"
@@ -207,6 +208,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化 apikeys store 失败: %v", err)
 	}
+	groupStore, err := modelgroups.NewStore(cfg.DataDir)
+	if err != nil {
+		log.Fatalf("初始化模型分组存储失败: %v", err)
+	}
 	ledger, err := billing.NewLedger(cfg.DataDir)
 	if err != nil {
 		log.Fatalf("初始化账本失败: %v", err)
@@ -234,11 +239,28 @@ func main() {
 
 	mux := http.NewServeMux()
 	protocol.RegisterRoutes(mux, orch)
+	pn := panel.New(p, sched, ledger, keyStore, authStore)
+	pn.SetAdminKey(cfg.AdminKey)
+	pn.SetConfig(cfg)
+	pn.SetGroups(groupStore)
+	pn.RegisterRoutes(mux)
 	// /v1/models：从模型目录缓存转换，带 group 分组元数据（discount/full_price）。
-	protocol.RegisterModelsRoute(mux, func() []protocol.ModelInfo {
+	// 分组开关（pn.ModelsGroup）：all 返回全部；discount/full_price 只返回该组——
+	// agent 不理解 group 字段时，手动切组让接口只吐该组的模型。
+	protocol.RegisterModelsRoute(mux, func(r *http.Request) []protocol.ModelInfo {
 		entries, promos, _, err := sched.ModelDirSnapshot()
 		if err != nil {
 			return nil
+		}
+		// 子钥匙绑定了自定义分组时，只返回组内模型。
+		var groupModels map[string]bool
+		if k, _ := r.Context().Value(ctxAPIKey).(*types.APIKey); k != nil && k.ModelGroupID != "" {
+			if g := groupStore.Get(k.ModelGroupID); g != nil {
+				groupModels = make(map[string]bool, len(g.Models))
+				for _, mid := range g.Models {
+					groupModels[mid] = true
+				}
+			}
 		}
 		// 优惠不在条目里（抓取层故意不写死），用 promotions 规则实时判定——
 		// 与面板 mdApplyPromos 同逻辑：promo 启用 + 时间窗口生效 + 模型 ID 命中。
@@ -255,8 +277,13 @@ func main() {
 				}
 			}
 		}
+		wantGroup := pn.ModelsGroup()
 		out := make([]protocol.ModelInfo, 0, len(entries))
 		for _, e := range entries {
+			// 子钥匙绑定了自定义分组：只保留组内模型（优先级高于全局分组开关）。
+			if groupModels != nil && !groupModels[e.ID] {
+				continue
+			}
 			group := "full_price"
 			label := ""
 			if p, ok := activePromo[e.ID]; ok {
@@ -267,6 +294,9 @@ func main() {
 					label = promoLabelCode(p.Badge.Label)
 				}
 			}
+			if groupModels == nil && wantGroup != "all" && group != wantGroup {
+				continue
+			}
 			out = append(out, protocol.ModelInfo{
 				ID:         e.ID,
 				Group:      group,
@@ -275,10 +305,6 @@ func main() {
 		}
 		return out
 	})
-	pn := panel.New(p, sched, ledger, keyStore, authStore)
-	pn.SetAdminKey(cfg.AdminKey)
-	pn.SetConfig(cfg)
-	pn.RegisterRoutes(mux)
 
 	// /healthz 公开（健康检查），其余走鉴权。
 	root := http.NewServeMux()
