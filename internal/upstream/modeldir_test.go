@@ -72,10 +72,11 @@ func TestFetchModelDirectory_Merge(t *testing.T) {
 	srv := mockModelDirServer(t, v3cfgBasic, enterpriseBasic, 200)
 	defer srv.Close()
 
-	got, err := testClient(srv).FetchModelDirectory(testAcct("cn"))
+	got, promos, err := testClient(srv).FetchModelDirectory(testAcct("cn"))
 	if err != nil {
 		t.Fatalf("FetchModelDirectory: %v", err)
 	}
+	_ = promos
 	ids := map[string]ModelEntry{}
 	for _, e := range got {
 		ids[e.ID] = e
@@ -104,8 +105,8 @@ func TestFetchModelDirectory_Merge(t *testing.T) {
 	}
 }
 
-// TestFetchModelDirectory_Promo 验证优惠解析：factor=0 → 限时免费；
-// 过期 schedule 的优惠不生效。
+// TestFetchModelDirectory_Promo 验证优惠规则原样返回（带域标记），
+// 生效判断移到展示时（PromoActiveAt），抓取时不再写死。
 func TestFetchModelDirectory_Promo(t *testing.T) {
 	v3 := `{"code":0,"data":{"models":[
 		{"id":"hy3","name":"Hy3","credits":"x0.10","maxOutputTokens":8192},
@@ -120,24 +121,35 @@ func TestFetchModelDirectory_Promo(t *testing.T) {
 	srv := mockModelDirServer(t, v3, `{"code":0,"data":{"models":[],"agents":[{"name":"cli","models":[]}]}}`, 200)
 	defer srv.Close()
 
-	got, err := testClient(srv).FetchModelDirectory(testAcct("cn"))
+	got, promos, err := testClient(srv).FetchModelDirectory(testAcct("cn"))
 	if err != nil {
 		t.Fatalf("FetchModelDirectory: %v", err)
 	}
-	byID := map[string]ModelEntry{}
+	if len(got) != 2 {
+		t.Fatalf("模型数应为 2，实际 %d", len(got))
+	}
+	// 条目本身不再挂优惠（展示时实时计算）
 	for _, e := range got {
-		byID[e.ID] = e
+		if e.PromoFactor != nil || e.PromoLabel != "" {
+			t.Errorf("抓取时不应写死优惠，%s 带了 %+v", e.ID, e)
+		}
 	}
-	hy3 := byID["hy3"]
-	if hy3.PromoFactor == nil || *hy3.PromoFactor != 0 {
-		t.Errorf("hy3 PromoFactor 应为 0（限时免费），实际 %+v", hy3.PromoFactor)
+	// 优惠规则原样返回且带域标记
+	if len(promos) != 2 {
+		t.Fatalf("优惠规则应为 2 条，实际 %d", len(promos))
 	}
-	if hy3.PromoLabel != "限时免费" || hy3.PromoCredits != "0x" || hy3.PromoNote != "免费中" {
-		t.Errorf("hy3 优惠字段不对：%+v", hy3)
+	for _, p := range promos {
+		if p.Realm != "cn" {
+			t.Errorf("优惠应标记域 cn，实际 %q", p.Realm)
+		}
 	}
-	// 过期 schedule 的优惠不应挂上
-	if glm := byID["glm-x"]; glm.PromoFactor != nil || glm.PromoLabel != "" {
-		t.Errorf("过期优惠不应生效，实际 %+v", glm)
+	// PromoActiveAt：无 schedule 的限时免费应生效
+	if !PromoActiveAt(&promos[0], time.Now()) {
+		t.Errorf("hy3 的限时免费应生效")
+	}
+	// 过期的 schedule 不应生效
+	if PromoActiveAt(&promos[1], time.Now()) {
+		t.Errorf("过期的夜间五折不应生效")
 	}
 }
 
@@ -152,10 +164,11 @@ func TestFetchModelDirectory_TrialBanner(t *testing.T) {
 	srv := mockModelDirServer(t, v3, `{"code":0,"data":{"models":[]}}`, 200)
 	defer srv.Close()
 
-	got, err := testClient(srv).FetchModelDirectory(testAcct("cn"))
+	got, promos, err := testClient(srv).FetchModelDirectory(testAcct("cn"))
 	if err != nil {
 		t.Fatalf("FetchModelDirectory: %v", err)
 	}
+	_ = promos
 	byID := map[string]ModelEntry{}
 	for _, e := range got {
 		byID[e.ID] = e
@@ -180,7 +193,8 @@ func TestFetchModelDirectory_IntlFallback(t *testing.T) {
 		404)
 	defer srv.Close()
 
-	got, err := testClient(srv).FetchModelDirectory(testAcct("intl"))
+	got, promos, err := testClient(srv).FetchModelDirectory(testAcct("intl"))
+	_ = promos
 	if err != nil {
 		t.Fatalf("FetchModelDirectory: %v", err)
 	}
@@ -201,7 +215,7 @@ func TestFetchModelDirectory_AllFail(t *testing.T) {
 	srv := mockModelDirServer(t, `{"code":500,"msg":"boom"}`, `{"code":500}`, 500)
 	defer srv.Close()
 
-	_, err := testClient(srv).FetchModelDirectory(testAcct("cn"))
+	_, _, err := testClient(srv).FetchModelDirectory(testAcct("cn"))
 	if err == nil {
 		t.Error("两路全失败应返回 error")
 	}
@@ -209,8 +223,8 @@ func TestFetchModelDirectory_AllFail(t *testing.T) {
 
 // TestPromoActive_Schedule 验证 daily 窗口与跨午夜逻辑。
 func TestPromoActive_Schedule(t *testing.T) {
-	mk := func(start, end string) *modelPromotion {
-		p := &modelPromotion{Enabled: true}
+	mk := func(start, end string) *ModelPromotion {
+		p := &ModelPromotion{Enabled: true}
 		p.Schedule = &struct {
 			Daily []struct {
 				Start string `json:"start"`
@@ -232,7 +246,7 @@ func TestPromoActive_Schedule(t *testing.T) {
 	if promoActive(mk("09:00", "18:00"), now) {
 		t.Error("02:00 不应在 09:00→18:00 窗口内")
 	}
-	if promoActive(&modelPromotion{Enabled: false}, now) {
+	if promoActive(&ModelPromotion{Enabled: false}, now) {
 		t.Error("disabled 的优惠不应生效")
 	}
 }
@@ -245,7 +259,7 @@ func TestCacheRoundTrip(t *testing.T) {
 		{ID: "hy3", Name: "Hy3", Realm: "cn", Credits: "x0.10", PromoFactor: &f, PromoLabel: "限时免费", Tags: []string{"badge:限时免费"}},
 		{ID: "gpt-x", Name: "GX", Realm: "cn", Credits: "x1.20"},
 	}
-	if err := SaveCache(dir, entries); err != nil {
+	if err := SaveCache(dir, entries, nil); err != nil {
 		t.Fatalf("SaveCache: %v", err)
 	}
 	// 文件权限应为 0600
@@ -256,7 +270,8 @@ func TestCacheRoundTrip(t *testing.T) {
 	if fi.Mode().Perm() != 0600 {
 		t.Errorf("缓存文件权限应为 0600，实际 %o", fi.Mode().Perm())
 	}
-	got, at, err := LoadCache(dir)
+	got, promos, at, err := LoadCache(dir)
+	_ = promos
 	if err != nil {
 		t.Fatalf("LoadCache: %v", err)
 	}
@@ -268,11 +283,11 @@ func TestCacheRoundTrip(t *testing.T) {
 	}
 	// 坏 JSON 应返回错误而非 panic
 	os.WriteFile(filepath.Join(dir, modelDirCacheFile), []byte("{bad"), 0600)
-	if _, _, err := LoadCache(dir); err == nil {
+	if _, _, _, err := LoadCache(dir); err == nil {
 		t.Error("坏缓存应返回 error")
 	}
 	// 不存在目录读缓存应返回 error
-	if _, _, err := LoadCache(filepath.Join(dir, "nope")); err == nil {
+	if _, _, _, err := LoadCache(filepath.Join(dir, "nope")); err == nil {
 		t.Error("缺失缓存应返回 error")
 	}
 }
@@ -280,7 +295,7 @@ func TestCacheRoundTrip(t *testing.T) {
 // TestCacheJSONShape 验证缓存文件 JSON 结构稳定（含 fetched_at）。
 func TestCacheJSONShape(t *testing.T) {
 	dir := t.TempDir()
-	if err := SaveCache(dir, []ModelEntry{{ID: "a", Realm: "cn"}}); err != nil {
+	if err := SaveCache(dir, []ModelEntry{{ID: "a", Realm: "cn"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(filepath.Join(dir, modelDirCacheFile))

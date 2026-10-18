@@ -115,12 +115,14 @@ func (m dynModelEntry) entryID() string {
 	return ""
 }
 
-// modelPromotion 是 /v3/config data.modelPromotions 的单条优惠定义
-// （linguo v3ModelPromotion 精简版）。
-type modelPromotion struct {
+// ModelPromotion 是 /v3/config data.modelPromotions 的单条优惠定义
+// （linguo v3ModelPromotion 精简版）。导出供缓存与面板透出原始规则，
+// 生效判断移到展示时（promoActiveAt），避免抓取时刻写死时段类优惠。
+type ModelPromotion struct {
 	Enabled  bool     `json:"enabled"`
 	Priority int      `json:"priority"`
 	ModelIDs []string `json:"modelIds"`
+	Realm    string   `json:"realm,omitempty"` // 抓取域：cn|intl（合并多域时填充）
 	Badge    *struct {
 		Label string `json:"label"`
 	} `json:"badge"`
@@ -139,6 +141,11 @@ type modelPromotion struct {
 		ValidFrom  string `json:"validFrom"` // RFC3339，可缺省
 		ValidUntil string `json:"validUntil"`
 	} `json:"schedule"`
+}
+
+// PromoActiveAt 报告优惠在 now 是否生效（面板展示时调用，时区恒 Asia/Shanghai）。
+func PromoActiveAt(p *ModelPromotion, now time.Time) bool {
+	return promoActive(p, now)
 }
 
 // trialBanner 是试用横幅条目（ModelTrialBanner.banners）。
@@ -166,7 +173,7 @@ func promoClock(hhmm string) (int, bool) {
 
 // promoActive 评估优惠在 now 是否生效：enabled + validFrom/validUntil 内 +
 // 落在任一 daily 窗口（支持跨午夜）；schedule 为 nil 视为全天生效。
-func promoActive(p *modelPromotion, now time.Time) bool {
+func promoActive(p *ModelPromotion, now time.Time) bool {
 	if !p.Enabled {
 		return false
 	}
@@ -206,48 +213,6 @@ func promoActive(p *modelPromotion, now time.Time) bool {
 		}
 	}
 	return true
-}
-
-// applyModelPromotions 把当前生效的优惠挂到目录条目：同模型多条命中取 priority
-// 最高；无 discount 对象的条目也挂标签/说明（错峰类），PromoFactor 留 nil。
-func applyModelPromotions(out map[string]*ModelEntry, promos []modelPromotion, now time.Time) {
-	if len(promos) == 0 || len(out) == 0 {
-		return
-	}
-	now = now.In(promoZone)
-	type cand struct {
-		prio int
-		p    *modelPromotion
-	}
-	best := map[string]cand{}
-	for i := range promos {
-		p := &promos[i]
-		if !promoActive(p, now) {
-			continue
-		}
-		for _, id := range p.ModelIDs {
-			if _, ok := out[id]; !ok {
-				continue // 目录外模型不挂
-			}
-			if b, seen := best[id]; !seen || p.Priority > b.prio {
-				best[id] = cand{prio: p.Priority, p: p}
-			}
-		}
-	}
-	for id, c := range best {
-		mi := out[id]
-		if c.p.Badge != nil {
-			mi.PromoLabel = c.p.Badge.Label
-		}
-		if c.p.Hover != nil {
-			mi.PromoNote = c.p.Hover.TextZh
-		}
-		if c.p.Discount != nil {
-			f := c.p.Discount.Factor
-			mi.PromoFactor = &f
-			mi.PromoCredits = c.p.Discount.DiscountedCredits
-		}
-	}
 }
 
 // nonChatModel 判定是否非对话模型（应过滤掉）。来源 harness buddy.ts:547-555：
@@ -343,7 +308,7 @@ func toModelEntry(m dynModelEntry, realm string) (ModelEntry, bool) {
 // v3result 是单路 /v3/config 抓取结果。
 type v3result struct {
 	entries []ModelEntry
-	promos  []modelPromotion
+	promos  []ModelPromotion
 	banners []trialBanner
 	err     error
 }
@@ -361,7 +326,7 @@ func (c *ModelDirClient) fetchV3Config(base string, acct *types.Account, ua stri
 				Banners []trialBanner `json:"banners"`
 			} `json:"ModelTrialBanner"`
 		} `json:"productFeaturesConfig"`
-		ModelPromotions []modelPromotion `json:"modelPromotions"`
+		ModelPromotions []ModelPromotion `json:"modelPromotions"`
 	}
 	if err := json.Unmarshal(data, &d); err != nil {
 		return v3result{err: fmt.Errorf("v3/config data 解析失败: %w", err)}
@@ -472,7 +437,7 @@ func (c *ModelDirClient) fetchEnterpriseOnce(url string, acct *types.Account, ba
 
 // FetchModelDirectory 按账号 realm 抓取模型目录并合并：v3/config 为主（多 UA 并集），
 // 企业端点补缺；挂试用横幅与当前生效优惠。两路独立容错，全失败才返回 error。
-func (c *ModelDirClient) FetchModelDirectory(acct *types.Account) ([]ModelEntry, error) {
+func (c *ModelDirClient) FetchModelDirectory(acct *types.Account) ([]ModelEntry, []ModelPromotion, error) {
 	realm := acct.Region
 	base := c.cnBase
 	if realm != "cn" {
@@ -503,7 +468,7 @@ func (c *ModelDirClient) FetchModelDirectory(acct *types.Account) ([]ModelEntry,
 
 	// 合并 v3 多 UA：去重，首个命中的条目为准。
 	v3map := map[string]*ModelEntry{}
-	var promos []modelPromotion
+	var promos []ModelPromotion
 	var banners []trialBanner
 	var v3err error
 	for range uas {
@@ -545,7 +510,11 @@ func (c *ModelDirClient) FetchModelDirectory(acct *types.Account) ([]ModelEntry,
 		v3map[id] = &e
 	}
 	// 挂当前生效的限时优惠（牌价 Credits 不动，Promo* 为生效价）。
-	applyModelPromotions(v3map, promos, time.Now())
+	// 优惠规则原样缓存（带域标记），生效判断移到展示时（面板前端按当前时间
+	// 实时计算），避免抓取时刻把时段类优惠（夜间折扣/错峰使用）写死。
+	for i := range promos {
+		promos[i].Realm = realm
+	}
 
 	// 企业端点只补 v3 缺失的模型。
 	er := <-entCh
@@ -559,36 +528,33 @@ func (c *ModelDirClient) FetchModelDirectory(acct *types.Account) ([]ModelEntry,
 	}
 
 	if len(v3map) == 0 {
-		return nil, fmt.Errorf("模型目录抓取失败: v3=%v enterprise=%v", v3err, er.err)
+		return nil, nil, fmt.Errorf("模型目录抓取失败: v3=%v enterprise=%v", v3err, er.err)
 	}
 	out := make([]ModelEntry, 0, len(v3map))
 	for _, e := range v3map {
 		out = append(out, *e)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return out, promos, nil
 }
 
-// modelDirCacheData 是缓存文件结构。
+// modelDirCacheData 是缓存文件结构：模型条目 + 优惠原始规则（含时段），
+// 生效判断在展示时做（见 PromoActiveAt），缓存本身不写死时段类优惠。
 type modelDirCacheData struct {
-	FetchedAt time.Time    `json:"fetched_at"`
-	Realm     string       `json:"realm"`
-	Entries   []ModelEntry `json:"entries"`
+	FetchedAt time.Time        `json:"fetched_at"`
+	Entries   []ModelEntry     `json:"entries"`
+	Promos    []ModelPromotion `json:"promos"`
 }
 
 // SaveCache 把模型目录原子写到 dir/models.json（0600）。dir 不存在则创建。
-func SaveCache(dir string, entries []ModelEntry) error {
+func SaveCache(dir string, entries []ModelEntry, promos []ModelPromotion) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	realm := ""
-	if len(entries) > 0 {
-		realm = entries[0].Realm
-	}
 	data, err := json.MarshalIndent(modelDirCacheData{
 		FetchedAt: time.Now(),
-		Realm:     realm,
 		Entries:   entries,
+		Promos:    promos,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -600,15 +566,16 @@ func SaveCache(dir string, entries []ModelEntry) error {
 	return os.Rename(tmp, filepath.Join(dir, modelDirCacheFile))
 }
 
-// LoadCache 从 dir/models.json 读缓存，返回条目与抓取时间。
-func LoadCache(dir string) ([]ModelEntry, time.Time, error) {
+// LoadCache 从 dir/models.json 读缓存，返回条目、优惠规则与抓取时间。
+// 兼容旧版无 promos 字段的缓存（promos 为空）。
+func LoadCache(dir string) ([]ModelEntry, []ModelPromotion, time.Time, error) {
 	data, err := os.ReadFile(filepath.Join(dir, modelDirCacheFile))
 	if err != nil {
-		return nil, time.Time{}, err
+		return nil, nil, time.Time{}, err
 	}
 	var cf modelDirCacheData
 	if err := json.Unmarshal(data, &cf); err != nil {
-		return nil, time.Time{}, fmt.Errorf("模型目录缓存解析失败: %w", err)
+		return nil, nil, time.Time{}, fmt.Errorf("模型目录缓存解析失败: %w", err)
 	}
-	return cf.Entries, cf.FetchedAt, nil
+	return cf.Entries, cf.Promos, cf.FetchedAt, nil
 }

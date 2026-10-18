@@ -37,7 +37,7 @@ func TestModelDirRegistered(t *testing.T) {
 	}
 }
 
-// TestPickModelDirAccount 验证选号：cn 优先、跳过停用、无可用返回 nil。
+// TestPickModelDirAccount 验证选号：cn 与 intl 各取一个、跳过停用、无可用返回空。
 func TestPickModelDirAccount(t *testing.T) {
 	mk := func(id, region string, disabled bool) *types.Account {
 		return &types.Account{ID: id, Region: region, Disabled: disabled}
@@ -47,18 +47,20 @@ func TestPickModelDirAccount(t *testing.T) {
 		mk("cn-off", "cn", true),
 		mk("cn-1", "cn", false),
 	})
-	if got := s.pickModelDirAccount(); got == nil || got.ID != "cn-1" {
-		t.Fatalf("应选中 cn-1，got %+v", got)
+	got := s.pickModelDirAccounts()
+	if len(got) != 2 || got[0].ID != "cn-1" || got[1].ID != "intl-1" {
+		t.Fatalf("应选中 [cn-1 intl-1]，got %+v", got)
 	}
-	// 全停用 → nil
+	// 全停用 → 空
 	s2 := newTestScheduler(t, []*types.Account{mk("x", "cn", true)})
-	if got := s2.pickModelDirAccount(); got != nil {
-		t.Fatalf("全停用应返回 nil，got %+v", got)
+	if got := s2.pickModelDirAccounts(); len(got) != 0 {
+		t.Fatalf("全停用应返回空，got %+v", got)
 	}
-	// 无 cn → 取第一个可用
+	// 只有 intl → 只取 intl
 	s3 := newTestScheduler(t, []*types.Account{mk("i1", "intl", false), mk("i2", "intl", false)})
-	if got := s3.pickModelDirAccount(); got == nil || got.ID != "i1" {
-		t.Fatalf("应选中 i1，got %+v", got)
+	got3 := s3.pickModelDirAccounts()
+	if len(got3) != 1 || got3[0].ID != "i1" {
+		t.Fatalf("应选中 [i1]，got %+v", got3)
 	}
 }
 

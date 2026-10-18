@@ -758,9 +758,11 @@ async function loadModels() {
   const tb = $('mdBody');
   tb.innerHTML = '<tr><td colspan="5"><div class="empty">正在读取缓存…</div></td></tr>';
   try {
-    // prime: 读本地缓存（每天 03:00 定时抓取），不直连上游
+    // prime: 读本地缓存（每天 03:00 定时抓取），不直连上游。
+    // 优惠规则随缓存下发，生效判断在展示时按当前时间实时计算（夜间折扣/
+    // 错峰使用等时段类优惠不会因为抓取时刻不在窗口内而丢失）。
     const d = await api('models');
-    mdAll = d.entries || [];
+    mdAll = mdApplyPromos(d.entries || [], d.promos || []);
     if (!mdAll.length) {
       tb.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="big">还没有模型目录数据</div>点击右上角「立即刷新」从上游抓取（之后每天 03:00 自动更新）</div></td></tr>';
       $('mdCount').textContent = '';
@@ -774,6 +776,64 @@ async function loadModels() {
     tb.innerHTML = '<tr><td colspan="5"><div class="empty">' + esc(e.message) + '</div></td></tr>';
     $('mdCount').textContent = '';
   }
+}
+
+// mdPromoActive 优惠规则在当前是否生效（移植自后端 promoActive，时区恒 Asia/Shanghai）。
+function mdPromoActive(p) {
+  if (!p || !p.enabled) return false;
+  // 北京时间：用 Intl 取 Asia/Shanghai 的时分，避免依赖客户端时区
+  const fmt = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false });
+  const parts = fmt.formatToParts(new Date());
+  const get = t => Number(parts.find(x => x.type === t).value);
+  const cur = get('hour') * 60 + get('minute');
+  const sc = p.schedule;
+  if (sc) {
+    if (sc.validFrom && new Date() < new Date(sc.validFrom)) return false;
+    if (sc.validUntil && !(new Date() < new Date(sc.validUntil))) return false;
+    if (sc.daily && sc.daily.length) {
+      let inWindow = false;
+      for (const w of sc.daily) {
+        const st = mdClock(w.start), ed = mdClock(w.end);
+        if (st == null || ed == null) continue;
+        if (st <= ed ? (cur >= st && cur < ed) : (cur >= st || cur < ed)) { inWindow = true; break; }
+      }
+      if (!inWindow) return false;
+    }
+  }
+  return true;
+}
+function mdClock(hhmm) {
+  const m = String(hhmm || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]), mm = Number(m[2]);
+  if (h > 24 || mm > 59) return null;
+  return h * 60 + mm;
+}
+
+// mdApplyPromos 把当前生效的优惠挂到模型条目（同模型多条命中取 priority 最高）。
+// 后端只下发原始规则，这里的判断按打开页面的当前时间做——跟 linguo 实时查询一致。
+function mdApplyPromos(entries, promos) {
+  const best = {}; // id -> {prio, p}
+  for (const p of promos) {
+    if (!mdPromoActive(p)) continue;
+    for (const id of (p.modelIds || [])) {
+      const cur = best[id];
+      if (!cur || (p.priority || 0) > cur.prio) best[id] = { prio: p.priority || 0, p };
+    }
+  }
+  return entries.map(m => {
+    const hit = best[m.id];
+    if (!hit) return m;
+    const p = hit.p;
+    const out = Object.assign({}, m);
+    if (p.badge) out.promo_label = p.badge.label;
+    if (p.hover) out.promo_note = p.hover.textZh;
+    if (p.discount) {
+      out.promo_factor = p.discount.factor;
+      out.promo_credits = p.discount.discountedCredits;
+    }
+    return out;
+  });
 }
 
 // fmtDT 把 RFC3339 时间格式化为本地可读串

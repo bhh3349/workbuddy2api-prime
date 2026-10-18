@@ -24,26 +24,32 @@ func (s *Scheduler) SetModelDir(c *upstream.ModelDirClient, cacheDir string) {
 	s.modelDirCacheDir = cacheDir
 }
 
-// pickModelDirAccount 选抓取用账号：cn 优先，否则取第一个可用账号；
-// 无可用账号返回 nil。
-func (s *Scheduler) pickModelDirAccount() *types.Account {
-	var fallback *types.Account
+// pickModelDirAccounts 选抓取用账号：cn 与 intl 各取一个（都没有则返回空）。
+// 双域抓取保证模型目录覆盖全部模型（linguo 面板 53 个 vs 单域 26 个的差距）。
+func (s *Scheduler) pickModelDirAccounts() []*types.Account {
+	var cnAcc, intlAcc *types.Account
 	for _, acc := range s.accounts() {
 		if acc == nil || acc.Disabled {
 			continue
 		}
-		if fallback == nil {
-			fallback = acc
-		}
-		if acc.Region == "cn" {
-			return acc
+		if acc.Region == "cn" && cnAcc == nil {
+			cnAcc = acc
+		} else if acc.Region != "cn" && intlAcc == nil {
+			intlAcc = acc
 		}
 	}
-	return fallback
+	out := []*types.Account{}
+	if cnAcc != nil {
+		out = append(out, cnAcc)
+	}
+	if intlAcc != nil {
+		out = append(out, intlAcc)
+	}
+	return out
 }
 
 // RefreshModelDir 立刻抓取一次模型目录并写缓存，返回模型条数。
-// 定时任务与面板"立即刷新"共用同一函数。
+// 定时任务与面板"立即刷新"共用同一函数。双域抓取后合并去重。
 func (s *Scheduler) RefreshModelDir(_ context.Context) (int, error) {
 	s.mu.Lock()
 	client, dir := s.modelDir, s.modelDirCacheDir
@@ -51,22 +57,41 @@ func (s *Scheduler) RefreshModelDir(_ context.Context) (int, error) {
 	if client == nil {
 		return 0, fmt.Errorf("模型目录客户端未初始化")
 	}
-	acc := s.pickModelDirAccount()
-	if acc == nil {
+	accs := s.pickModelDirAccounts()
+	if len(accs) == 0 {
 		return 0, fmt.Errorf("没有可用账号")
 	}
-	entries, err := client.FetchModelDirectory(acc)
-	if err != nil {
-		return 0, err
+	seen := map[string]bool{}
+	var entries []upstream.ModelEntry
+	var promos []upstream.ModelPromotion
+	for _, acc := range accs {
+		es, ps, err := client.FetchModelDirectory(acc)
+		if err != nil {
+			s.logf("scheduler: 模型目录抓取失败（%s）: %v", acc.Region, err)
+			continue
+		}
+		for _, e := range es {
+			key := e.Realm + ":" + e.ID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			entries = append(entries, e)
+		}
+		promos = append(promos, ps...)
 	}
-	if err := upstream.SaveCache(dir, entries); err != nil {
+	if len(entries) == 0 {
+		return 0, fmt.Errorf("模型目录抓取失败：双域均无数据")
+	}
+	if err := upstream.SaveCache(dir, entries, promos); err != nil {
 		return 0, fmt.Errorf("缓存落盘失败: %w", err)
 	}
+	s.logf("scheduler: 模型目录已更新：%d 个模型 / %d 条优惠规则", len(entries), len(promos))
 	return len(entries), nil
 }
 
 // ModelDirSnapshot 读模型目录缓存（面板展示用，只读不触发上游请求）。
-func (s *Scheduler) ModelDirSnapshot() ([]upstream.ModelEntry, time.Time, error) {
+func (s *Scheduler) ModelDirSnapshot() ([]upstream.ModelEntry, []upstream.ModelPromotion, time.Time, error) {
 	s.mu.Lock()
 	dir := s.modelDirCacheDir
 	s.mu.Unlock()

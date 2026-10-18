@@ -141,19 +141,22 @@ func (p *Panel) handleKeepaliveAll(w http.ResponseWriter, r *http.Request) {
 }
 
 // modelDirView 是模型目录接口形态：无缓存时 fetched_at 为 null，entries 为空数组。
+// promos 为优惠原始规则（含时段），生效判断由前端按当前时间实时计算。
 type modelDirView struct {
-	FetchedAt *string                `json:"fetched_at"`
-	Entries   []upstream.ModelEntry `json:"entries"`
+	FetchedAt *string                     `json:"fetched_at"`
+	Entries   []upstream.ModelEntry       `json:"entries"`
+	Promos    []upstream.ModelPromotion   `json:"promos"`
 }
 
 // handleModels 返回模型目录缓存（只读，不触发上游请求）。
 func (p *Panel) handleModels(w http.ResponseWriter, r *http.Request) {
-	v := modelDirView{Entries: []upstream.ModelEntry{}}
+	v := modelDirView{Entries: []upstream.ModelEntry{}, Promos: []upstream.ModelPromotion{}}
 	if p.sched != nil {
-		if entries, at, err := p.sched.ModelDirSnapshot(); err == nil {
+		if entries, promos, at, err := p.sched.ModelDirSnapshot(); err == nil {
 			s := at.Format(time.RFC3339)
 			v.FetchedAt = &s
 			v.Entries = entries
+			v.Promos = promos
 		}
 	}
 	writeJSON(w, v)
@@ -170,7 +173,7 @@ func (p *Panel) handleModelsRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "抓取失败: "+err.Error())
 		return
 	}
-	_, at, _ := p.sched.ModelDirSnapshot()
+	_, _, at, _ := p.sched.ModelDirSnapshot()
 	writeJSON(w, map[string]any{"ok": true, "count": n, "fetched_at": at.Format(time.RFC3339)})
 }
 
