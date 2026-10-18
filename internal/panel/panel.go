@@ -68,6 +68,8 @@ func (p *Panel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /panel/api/accounts/{uid}/balance", p.handleAccountBalance)
 	mux.HandleFunc("POST /panel/api/accounts/{uid}/disable", p.handleAccountDisable)
 	mux.HandleFunc("POST /panel/api/accounts/{uid}/enable", p.handleAccountEnable)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/pause", p.handleAccountPause)
+	mux.HandleFunc("POST /panel/api/accounts/{uid}/resume", p.handleAccountResume)
 	mux.HandleFunc("DELETE /panel/api/accounts/{uid}", p.handleAccountRemove)
 	mux.HandleFunc("POST /panel/api/checkin_all", p.handleCheckinAll)
 	mux.HandleFunc("POST /panel/api/balance_all", p.handleBalanceAll)
@@ -106,11 +108,11 @@ func (p *Panel) serveAppJS(w http.ResponseWriter, r *http.Request) {
 	w.Write(appJS)
 }
 
-// handleUsage 返回用量聚合（billing.Summary 原生形态）。
+// handleUsage 返回用量聚合（billing.Detail：汇总 + 按模型/按账号拆分 + 错误数）。
 // 参数：key（子钥匙过滤）、hours（默认 24）。
 func (p *Panel) handleUsage(w http.ResponseWriter, r *http.Request) {
 	if p.ledger == nil {
-		writeJSON(w, billing.Summary{})
+		writeJSON(w, billing.Detail{ByModel: map[string]billing.Summary{}, ByAccount: map[string]billing.Summary{}})
 		return
 	}
 	hours := 24
@@ -119,12 +121,12 @@ func (p *Panel) handleUsage(w http.ResponseWriter, r *http.Request) {
 			hours = n
 		}
 	}
-	sum, err := p.ledger.Query(r.URL.Query().Get("key"), time.Now().Add(-time.Duration(hours)*time.Hour))
+	d, err := p.ledger.QueryDetail(r.URL.Query().Get("key"), time.Now().Add(-time.Duration(hours)*time.Hour))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "查询用量失败: "+err.Error())
 		return
 	}
-	writeJSON(w, sum)
+	writeJSON(w, d)
 }
 
 // handleKeepaliveAll 手动触发全量保活。
@@ -183,6 +185,7 @@ type accountView struct {
 	UID             string  `json:"uid"`
 	Region          string  `json:"region"`
 	Disabled        bool    `json:"disabled"`
+	Paused          bool    `json:"paused"`
 	CreditTotal     float64 `json:"credit_total"`
 	CreditExpiresAt string  `json:"credit_expires_at"`
 	Weight          float64 `json:"weight"`
@@ -223,12 +226,14 @@ func (p *Panel) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			UID:             a.UID,
 			Region:          a.Region,
 			Disabled:        a.Disabled,
+			Paused:          a.Paused,
 			CreditTotal:     a.CreditTotal,
 			CreditExpiresAt: fmtTime(a.CreditExpiresAt),
 			Weight:          a.Weight,
 		}
 		if st, ok := stats[a.ID]; ok {
 			v.Disabled = v.Disabled || st.Disabled
+			v.Paused = v.Paused || st.Paused
 			v.Fails = st.Fails
 			v.SoftStreak = st.SoftStreak
 			v.CooldownUntil = fmtTime(st.CooldownUntil)

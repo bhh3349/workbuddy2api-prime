@@ -220,3 +220,65 @@ func (l *Ledger) Query(apiKeyID string, since time.Time) (Summary, error) {
 	}
 	return s, nil
 }
+
+// Detail 是带维度拆分的用量明细。
+type Detail struct {
+	Summary
+	Errors    int                `json:"errors"`     // 失败请求数
+	ByModel   map[string]Summary `json:"by_model"`   // 按模型拆分
+	ByAccount map[string]Summary `json:"by_account"` // 按账号拆分
+}
+
+// QueryDetail 返回带维度拆分的用量明细（与 Query 同样的过滤语义）。
+func (l *Ledger) QueryDetail(apiKeyID string, since time.Time) (Detail, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var d Detail
+	d.ByModel = map[string]Summary{}
+	d.ByAccount = map[string]Summary{}
+	f, err := os.Open(l.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return d, nil
+		}
+		return d, fmt.Errorf("billing: 打开账本文件失败: %w", err)
+	}
+	defer f.Close()
+
+	add := func(s Summary, r types.UsageRecord) Summary {
+		s.Requests++
+		s.PromptTokens += r.PromptTok
+		s.CompletionTokens += r.CompTok
+		s.TotalCredit += r.Credit
+		return s
+	}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		var r types.UsageRecord
+		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
+			continue
+		}
+		if apiKeyID != "" && r.APIKeyID != apiKeyID {
+			continue
+		}
+		if !since.IsZero() && r.Time.Before(since) {
+			continue
+		}
+		d.Summary = add(d.Summary, r)
+		if !r.OK {
+			d.Errors++
+		}
+		if r.Model != "" {
+			d.ByModel[r.Model] = add(d.ByModel[r.Model], r)
+		}
+		if r.AccountID != "" {
+			d.ByAccount[r.AccountID] = add(d.ByAccount[r.AccountID], r)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return d, fmt.Errorf("billing: 读取账本失败: %w", err)
+	}
+	return d, nil
+}

@@ -749,6 +749,22 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
             <option value="free">限时免费</option>
             <option value="discount">打折（非免费）</option>
           </select>
+          <select id="mdCap" aria-label="按能力筛选">
+            <option value="">全部能力</option>
+            <option value="tool">支持工具调用</option>
+            <option value="vision">支持视觉</option>
+            <option value="reasoning">支持思考</option>
+            <option value="default">默认模型</option>
+          </select>
+          <select id="mdEffort" aria-label="按思考档位筛选">
+            <option value="">全部档位</option>
+            <option value="off">可关闭思考</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="max">max</option>
+          </select>
           <select id="mdSort" aria-label="排序方式">
             <option value="default">缓存默认顺序</option>
             <option value="rate">积分倍率 低 → 高</option>
@@ -760,7 +776,7 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
         </div>
         <div class="tbl-wrap">
         <table class="acc md">
-          <thead><tr><th class="mark" aria-hidden="true"></th><th>模型</th><th>积分倍率</th><th>标签</th><th>说明</th></tr></thead>
+          <thead><tr><th class="mark" aria-hidden="true"></th><th>模型</th><th>积分倍率</th><th>默认档</th><th>支持的思考档位</th><th>上下文长度</th><th>最大输出</th></tr></thead>
           <tbody id="mdBody"></tbody>
         </table>
         </div>

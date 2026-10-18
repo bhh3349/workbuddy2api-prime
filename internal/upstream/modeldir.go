@@ -71,8 +71,20 @@ type ModelEntry struct {
 	PromoLabel        string   `json:"promo_label,omitempty"`   // 徽章文案：限时免费 / 夜间折扣 / 错峰使用
 	PromoNote         string   `json:"promo_note,omitempty"`    // hover 说明原文（含时段/日期描述）
 	Tags              []string `json:"tags,omitempty"`          // 模型标签，含 badge:限时免费 等
+	Vendor            string   `json:"vendor,omitempty"`
+	IsDefault         bool     `json:"is_default,omitempty"`
 	SupportsReasoning bool     `json:"supports_reasoning"`
 	SupportsImages    bool     `json:"supports_images"`
+	SupportsToolCall  bool     `json:"supports_tool_call,omitempty"`
+	OnlyReasoning     bool     `json:"only_reasoning,omitempty"`
+	CanDisableThink   bool     `json:"can_disable_thinking,omitempty"`
+	DefaultEffort     string   `json:"default_effort,omitempty"`
+	SupportedEfforts  []string `json:"supported_efforts,omitempty"`
+	ReasoningEffort   string   `json:"reasoning_effort,omitempty"`
+	ReasoningSummary  string   `json:"reasoning_summary,omitempty"`
+	ContextLength     int64    `json:"context_length,omitempty"`
+	MaxOutputTokens   int64    `json:"max_output_tokens,omitempty"`
+	MaxAllowedSize    int64    `json:"max_allowed_size,omitempty"`
 	Description       string   `json:"description,omitempty"`
 }
 
@@ -103,10 +115,23 @@ type dynModelEntry struct {
 	Description     string   `json:"descriptionZh"`
 	Credits         string   `json:"credits"`
 	Tags            []string `json:"tags"`
+	Vendor          string   `json:"vendor"`
+	IsDefault       bool     `json:"isDefault"`
+	MaxInputTokens  int64    `json:"maxInputTokens"`
 	MaxOutputTokens int64    `json:"maxOutputTokens"`
+	MaxAllowedSize  int64    `json:"maxAllowedSize"`
 	Disabled        bool     `json:"disabled"`
 	SupportsImages  bool     `json:"supportsImages"`
 	SupportsReason  bool     `json:"supportsReasoning"`
+	SupportsTool    bool     `json:"supportsToolCall"`
+	OnlyReasoning   bool     `json:"onlyReasoning"`
+	Reasoning       struct {
+		Effort             string   `json:"effort"`
+		Summary            string   `json:"summary"`
+		DefaultEffort      string   `json:"defaultEffort"`
+		CanDisableThinking bool     `json:"canDisableThinking"`
+		SupportedEfforts   []string `json:"supportedEfforts"`
+	} `json:"reasoning"`
 }
 
 // entryID 取模型的展示/去重 id：id→modelId→model→name 宽松回退（global 目录变体用）。
@@ -297,14 +322,30 @@ func toModelEntry(m dynModelEntry, realm string) (ModelEntry, bool) {
 	if id == "" || m.Disabled || nonChatModel(id, m.MaxOutputTokens, m.Tags) {
 		return ModelEntry{}, false
 	}
+	def := m.Reasoning.DefaultEffort
+	if def == "" {
+		def = m.Reasoning.Effort
+	}
 	return ModelEntry{
 		ID:                id,
 		Name:              m.Name,
 		Realm:             realm,
 		Credits:           m.Credits,
 		Tags:              m.Tags,
+		Vendor:            m.Vendor,
+		IsDefault:         m.IsDefault,
 		SupportsReasoning: m.SupportsReason,
 		SupportsImages:    m.SupportsImages,
+		SupportsToolCall:  m.SupportsTool,
+		OnlyReasoning:     m.OnlyReasoning,
+		CanDisableThink:   m.Reasoning.CanDisableThinking,
+		DefaultEffort:     def,
+		SupportedEfforts:  m.Reasoning.SupportedEfforts,
+		ReasoningEffort:   m.Reasoning.Effort,
+		ReasoningSummary:  m.Reasoning.Summary,
+		ContextLength:     m.MaxInputTokens,
+		MaxOutputTokens:   m.MaxOutputTokens,
+		MaxAllowedSize:    m.MaxAllowedSize,
 		Description:       m.Description,
 	}, true
 }

@@ -7,7 +7,7 @@ let overviewData = null, cfgLoaded = null;
 let logPin = true, loginState = null, loginTimer = null;
 let refTimer = null;
 /* 视图级筛选状态（模块级声明放在文件顶部，避免顶层 go() 早于声明执行时踩 TDZ）。 */
-let mdFilter = { q: '', realm: '', promo: '', sort: 'default' };
+let mdFilter = { q: '', realm: '', cap: '', effort: '', promo: '', sort: 'default' };
 let mdAll = [];
 let reqFilter = { q: '', outcome: '' };
 let reqEntries = [];
@@ -104,7 +104,7 @@ async function primeOverview() {
       realm: a.region === 'intl' ? 'global' : 'cn',
       enterprise: false,
       disabled: !!a.disabled,
-      paused: false,
+      paused: !!a.paused,
       credits: credits,
       credits_total: credits,
       credits_earliest_expiry: a.credit_expires_at || '',
@@ -152,6 +152,14 @@ async function primeUsage(q) {
   ]);
   const pt = Number(sum.PromptTokens || 0), ct = Number(sum.CompletionTokens || 0);
   const reqs = Number(sum.Requests || 0), credits = Number(sum.TotalCredit || 0);
+  const errs = Number(sum.errors || 0);
+  const toArr = (m) => Object.entries(m || {}).map(([k, v]) => ({
+    key: k, requests: v.Requests || 0,
+    prompt_tokens: v.PromptTokens || 0, completion_tokens: v.CompletionTokens || 0,
+    total_tokens: (v.PromptTokens || 0) + (v.CompletionTokens || 0),
+    credits: v.TotalCredit || 0,
+  })).sort((a, b) => b.requests - a.requests);
+  const byModel = toArr(sum.by_model), byAccount = toArr(sum.by_account);
   const pts = (series || []).map(b => ({
     t: localHourKey(b.time),
     prompt_tokens: b.prompt_tokens || 0,
@@ -162,12 +170,12 @@ async function primeUsage(q) {
   return {
     totals: {
       total_tokens: pt + ct, prompt_tokens: pt, completion_tokens: ct,
-      requests: reqs, errors: 0, avg_latency_ms: 0,
+      requests: reqs, errors: errs, avg_latency_ms: 0,
       credits: credits, credit_tokens: pt + ct, credit_samples: reqs,
     },
     series: pts,
     credit_by_account: [], credit_by_model: [],
-    by_account: [], by_model: [], by_realm: [],
+    by_account: byAccount, by_model: byModel, by_realm: [],
     buckets: pts.length,
   };
 }
@@ -587,6 +595,8 @@ function renderAccounts(list) {
         '<button class="xs ghost" data-a="balance" data-u="' + esc(s.uid) + '"' + (s.enterprise ? ' title="刷新企业版已分配额度（上游 get-enterprise-user-usage）"' : '') + '>' + (s.enterprise ? '额度' : '余额') + '</button>' +
         (s.enterprise ? '' :
           '<button class="xs ghost" data-a="tasks" data-u="' + esc(s.uid) + '">任务</button>') +
+        (s.paused ? '<button class="xs primary" data-a="resume" data-u="' + esc(s.uid) + '">恢复选号</button>'
+          : '<button class="xs ghost" data-a="pause" data-u="' + esc(s.uid) + '" title="退出选号，但照常签到 / 保活 / 刷新余额">暂停选号</button>') +
         (frozen ? '<button class="xs primary" data-a="revive" data-u="' + esc(s.uid) + '">解冻</button>' : '') +
         (s.disabled ? '' : '<button class="xs ghost" data-a="disable" data-u="' + esc(s.uid) + '">禁用</button>') +
         '<button class="xs ghost danger" data-a="remove" data-u="' + esc(s.uid) + '">移除</button>' +
@@ -873,6 +883,15 @@ function mdMatch(m, f) {
     }
   }
   if (f.realm && m.realm !== f.realm) return false;
+  if (f.cap === 'tool' && !m.supports_tool_call) return false;
+  if (f.cap === 'vision' && !m.supports_images) return false;
+  if (f.cap === 'reasoning' && !m.supports_reasoning) return false;
+  if (f.cap === 'default' && !m.is_default) return false;
+  if (f.effort === 'off') {
+    if (!m.can_disable_thinking) return false;
+  } else if (f.effort && !(m.supported_efforts || []).includes(f.effort)) {
+    return false;
+  }
   const factor = m.promo_factor == null ? null : Number(m.promo_factor);
   if (f.promo === 'promo' && factor == null && !m.promo_label) return false;
   if (f.promo === 'free' && !(factor === 0)) return false;
@@ -890,34 +909,39 @@ function mdSortList(list, f) {
   return out;
 }
 
-// mdRowHtml 单个模型行（prime 简表：模型 / 积分倍率 / 标签 / 说明）。
-// 积分倍率列复用 rateCell（含 promo 牌价删除线 + 限时免费徽章 + hover 说明）。
+// mdRowHtml 单个模型行（对齐 linguo：模型+能力徽标 / 积分倍率 / 默认档 /
+// 思考档位 / 上下文长度 / 最大输出）。
 function mdRowHtml(m) {
-  const tagHtml = [];
-  (m.tags || []).forEach(t => {
-    const label = String(t).replace(/^badge:/, '');
-    if (label && label !== m.promo_label) tagHtml.push('<span class="tag warn">' + esc(label) + '</span>');
-  });
-  if (m.supports_images) tagHtml.push('<span class="tag">视觉</span>');
-  if (m.supports_reasoning) tagHtml.push('<span class="tag">思考</span>');
+  const eff = (m.supported_efforts || []).slice();
+  if (m.can_disable_thinking && eff.length && !eff.includes('off')) eff.push('off（可关）');
+  const effs = eff.length ? eff.map(e => '<span class="tag warn">' + esc(e) + '</span>').join(' ')
+    : '<span style="color:var(--ink-3);font-size:12.5px">' + (m.supports_reasoning ? '固定档 · 默认 ' + esc(m.default_effort || '?') : '不支持思考') + '</span>';
+  // 能力徽标：默认模型 / 工具调用 / 视觉 / 纯推理
+  const caps = [];
+  if (m.is_default) caps.push('<span class="tag ok">默认</span>');
+  if (m.supports_tool_call) caps.push('<span class="tag warn">工具</span>');
+  if (m.supports_images) caps.push('<span class="tag warn">视觉</span>');
+  if (m.supports_reasoning && !m.can_disable_thinking) caps.push('<span class="tag warn">思考常开</span>');
+  if (m.only_reasoning) caps.push('<span class="tag warn">纯推理</span>');
   const realmTag = m.realm === 'cn' ? '<span class="tag ok">国内</span>'
     : m.realm === 'intl' ? '<span class="tag">国际</span>' : '';
+  if (realmTag) caps.push(realmTag);
+  const capHtml = caps.length ? '<div class="id" style="margin-top:2px">' + caps.join(' ') + '</div>' : '';
   const tip = m.description ? ' title="' + esc(m.description) + '"' : '';
-  const desc = m.description ? esc(m.description.length > 42 ? m.description.slice(0, 42) + '…' : m.description) : '<span style="color:var(--ink-3)">—</span>';
-  return '<tr><td class="mark" aria-hidden="true"><i></i></td>' +
-    '<td class="who"' + tip + '><div class="nm">' + esc(m.id) + '</div>' +
-    (m.name && m.name !== m.id ? '<div class="id">' + esc(m.name) + '</div>' : '') +
-    (realmTag ? '<div style="margin-top:2px">' + realmTag + '</div>' : '') + '</td>' +
+  const fmtK = v => v >= 1000 ? Math.round(v / 1000) + 'K' : String(v);
+  return '<tr><td class="mark" aria-hidden="true"><i></i></td><td class="who"' + tip + '><div class="nm">' + esc(m.id) + '</div><div class="id">' + esc(m.name || '') + '</div>' + capHtml + '</td>' +
     '<td class="num">' + rateCell(m) + '</td>' +
-    '<td>' + (tagHtml.length ? tagHtml.join(' ') : '<span style="color:var(--ink-3)">—</span>') + '</td>' +
-    '<td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"' + tip + '>' + desc + '</td></tr>';
+    '<td>' + (m.default_effort ? '<span class="tag ok">' + esc(m.default_effort) + '</span>' : '<span style="color:var(--ink-3)">—</span>') + '</td>' +
+    '<td class="efs" style="white-space:normal">' + effs + '</td>' +
+    '<td class="num">' + (m.context_length ? fmtK(m.context_length) : '—') + '</td>' +
+    '<td class="num">' + (m.max_output_tokens ? fmtK(m.max_output_tokens) : '—') + '</td></tr>';
 }
 
 function renderModels() {
   const tb = $('mdBody');
   const list = mdSortList(mdAll.filter(m => mdMatch(m)));
   if (!list.length) {
-    tb.innerHTML = '<tr><td colspan="5"><div class="empty">没有符合当前筛选条件的模型</div></td></tr>';
+    tb.innerHTML = '<tr><td colspan="7"><div class="empty">没有符合当前筛选条件的模型</div></td></tr>';
   } else {
     tb.innerHTML = list.map(m => mdRowHtml(m)).join('');
   }
@@ -929,9 +953,9 @@ function renderModels() {
 }
 
 function resetModelFilter() {
-  mdFilter = { q: '', realm: '', promo: '', sort: 'default' };
-  $('mdQ').value = ''; $('mdRealm').value = '';
-  $('mdPromo').value = ''; $('mdSort').value = 'default';
+  mdFilter = { q: '', realm: '', cap: '', effort: '', promo: '', sort: 'default' };
+  $('mdQ').value = ''; $('mdRealm').value = ''; $('mdCap').value = '';
+  $('mdEffort').value = ''; $('mdPromo').value = ''; $('mdSort').value = 'default';
   renderModels();
 }
 
@@ -943,7 +967,7 @@ if ($('mdQ')) { // prime: 隐藏视图守卫
     mdQTimer = setTimeout(() => { mdFilter.q = $('mdQ').value.trim(); renderModels(); }, 120);
   };
 }
-for (const [id, key] of [['mdRealm', 'realm'], ['mdPromo', 'promo'], ['mdSort', 'sort']]) {
+for (const [id, key] of [['mdRealm', 'realm'], ['mdCap', 'cap'], ['mdEffort', 'effort'], ['mdPromo', 'promo'], ['mdSort', 'sort']]) {
   const el = $(id);
   if (!el) continue;
   el.onchange = () => { mdFilter[key] = el.value; renderModels(); };

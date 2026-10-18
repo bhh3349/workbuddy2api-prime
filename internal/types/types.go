@@ -19,6 +19,7 @@ type Account struct {
 	ExpiresAt         time.Time
 	Disabled          bool
 	DisabledModels    []string  // 账号级模型黑名单（精确匹配）
+	Paused            bool      // 暂停选号：退出选号池，但照常签到/保活/刷新余额
 	Weight            float64   // 手动权重，默认 1
 	CreditTotal       float64   // 剩余额度（积分）
 	CreditExpiresAt   time.Time // 额度到期时间（最早到期优先路由用）

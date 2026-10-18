@@ -149,6 +149,27 @@ func (p *Panel) handleBalanceAll(w http.ResponseWriter, r *http.Request) {
 
 // handleAccountDisable: POST /panel/api/accounts/{uid}/disable
 // handleAccountEnable: POST /panel/api/accounts/{uid}/enable
+// handleAccountPause: POST /panel/api/accounts/{uid}/pause（暂停选号）
+// handleAccountResume: POST /panel/api/accounts/{uid}/resume（恢复选号）
+func (p *Panel) handleAccountPause(w http.ResponseWriter, r *http.Request) {
+	p.setAccountPaused(w, r, true)
+}
+
+func (p *Panel) handleAccountResume(w http.ResponseWriter, r *http.Request) {
+	p.setAccountPaused(w, r, false)
+}
+
+func (p *Panel) setAccountPaused(w http.ResponseWriter, r *http.Request, paused bool) {
+	uid := r.PathValue("uid")
+	if p.pool == nil || !p.pool.SetPaused(uid, paused) {
+		writeError(w, http.StatusNotFound, "账号不存在")
+		return
+	}
+	if acc := p.pool.Get(uid); acc != nil && p.auth != nil {
+		_ = p.auth.Save(acc) // 落盘失败不阻塞本次操作（内存态已生效）
+	}
+	writeJSON(w, map[string]any{"ok": true, "paused": paused})
+}
 // 停用/启用：退出/恢复选号候选，维护任务照常。
 func (p *Panel) handleAccountDisable(w http.ResponseWriter, r *http.Request) {
 	p.setAccountDisabled(w, r, true)

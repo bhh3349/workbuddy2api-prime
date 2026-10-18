@@ -172,6 +172,9 @@ func (p *Pool) eligibleLocked(st *accountState, model string, now time.Time) (bo
 	if acc.Disabled {
 		return false, "disabled"
 	}
+	if acc.Paused {
+		return false, "paused"
+	}
 	if now.Before(st.cooldownUntil) {
 		return false, "cooling"
 	}
@@ -433,6 +436,7 @@ func (p *Pool) Report(r types.CallReport) {
 type AccountStat struct {
 	AccountID     string
 	Disabled      bool
+	Paused        bool
 	Fails         int                  // 连续上游失败计数
 	SoftStreak    int                  // 连续被限流计数
 	CooldownUntil time.Time            // 账号级冷却截止
@@ -455,6 +459,7 @@ func (p *Pool) Snapshot() []AccountStat {
 		out = append(out, AccountStat{
 			AccountID:     st.acc.ID,
 			Disabled:      st.acc.Disabled,
+			Paused:        st.acc.Paused,
 			Fails:         st.fails,
 			SoftStreak:    st.softStreak,
 			CooldownUntil: st.cooldownUntil,
@@ -500,6 +505,19 @@ func (p *Pool) SetDisabled(id string, disabled bool) bool {
 		return false
 	}
 	st.acc.Disabled = disabled
+	return true
+}
+
+// SetPaused 设置账号暂停选号状态（true=暂停选号，false=恢复选号）。
+// 暂停的账号退出选号池，但照常签到/保活/刷新余额。
+func (p *Pool) SetPaused(id string, paused bool) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st, ok := p.byID[id]
+	if !ok {
+		return false
+	}
+	st.acc.Paused = paused
 	return true
 }
 
