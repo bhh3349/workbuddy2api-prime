@@ -52,6 +52,10 @@ const (
 	// v3/config 对 UA 敏感：IDE UA 拿完整能力版目录（linguo codeBuddyIDEUA）。
 	modelDirIDEUA = "CodeBuddyIDE/4.12.0 CodeBuddy/4.12.0"
 	modelDirCLIUA = "CLI/2.63.2 CodeBuddy/2.63.2"
+	// modelDirDesktopUA 桌面端主路 UA（intl 第三路）：项目 chat 路径实际使用的
+	// UA，与官方客户端看到的目录同源。linguo 实测三路各有独有模型，缺一不可；
+	// intl 的 modelPromotions 疑似只随桌面端路下发（IDE/CLI 路实测无 promos）。
+	modelDirDesktopUA = "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1"
 
 	modelDirCacheFile = "models.json"
 )
@@ -445,10 +449,11 @@ func (c *ModelDirClient) FetchModelDirectory(acct *types.Account) ([]ModelEntry,
 		base = c.intlBase
 	}
 
-	// v3 UA 路：cn 单 IDE UA；intl 加 CLI UA（不同 UA 下发不同模型集合，取并集）。
+	// v3 UA 路：cn 单 IDE UA；intl 三路（桌面端主路 + IDE + CLI，不同 UA 下发
+	// 不同模型集合，取并集；桌面端路字段权威，放首位）。
 	uas := []string{modelDirIDEUA}
 	if realm == "intl" {
-		uas = append(uas, modelDirCLIUA)
+		uas = []string{modelDirDesktopUA, modelDirIDEUA, modelDirCLIUA}
 	}
 	v3ch := make(chan v3result, len(uas))
 	for _, ua := range uas {
