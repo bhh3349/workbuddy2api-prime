@@ -1239,20 +1239,6 @@ async function loadConfig() {
     $('cfgMaxFails').value = d.max_consecutive_fails != null ? d.max_consecutive_fails : '';
   } catch (e) { toast('读取配置失败：' + e.message, 'err'); }
 }
-    let v;
-    if (el.type === 'checkbox') v = el.checked;
-    else if (el.type === 'number') { v = el.value.trim() === '' ? undefined : Number(el.value); }
-    else {
-      const raw = el.value.trim();
-      // 覆盖型字段空串照发（见 CLEARABLE_CFG）；其余空 = 不下发。
-      if (raw === '') v = CLEARABLE_CFG.has(name) ? '' : undefined;
-      else if (name.endsWith('_hours')) v = raw.split(/[,，\s]+/).filter(Boolean).map(Number);
-      else v = raw;
-    }
-    if (v !== undefined) put(out, path, v);
-  }
-  return out;
-}
 // prime 配置保存：只提交可调参数。
 document.addEventListener('DOMContentLoaded', () => {
   const f = $('cfgForm');

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -66,6 +68,25 @@ func TestIndexPage(t *testing.T) {
 	// linguo 前端：app.js 外链脚本必须存在
 	if !strings.Contains(rec.Body.String(), "app.js") {
 		t.Fatal("页面未引用 app.js")
+	}
+}
+
+// TestAppJsSyntax 用 node --check 完整解析 app.js，防止「删函数只删上半截」
+// 这类括号不配对的语法错误一路发到线上（go build/vet/test 不检查 embed 的 JS）。
+// 环境无 node 时跳过（CI 应保证 node 可用）。
+func TestAppJsSyntax(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node 不可用，跳过 JS 语法检查")
+	}
+	// app.js 与本测试文件同目录（internal/panel）。
+	js := "app.js"
+	if _, err := os.Stat(js); err != nil {
+		t.Fatalf("找不到 %s: %v", js, err)
+	}
+	out, err := exec.Command(node, "--check", js).CombinedOutput()
+	if err != nil {
+		t.Fatalf("app.js 语法错误:\n%s", out)
 	}
 }
 
