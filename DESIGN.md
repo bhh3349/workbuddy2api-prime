@@ -75,3 +75,20 @@ client → apikeys.Verify → router.Resolve(model) → pool.Pick(account)
 - **Phase 1**：types/config/auth/pool/upstream + OpenAI chat 主路径（可用网关）
 - **Phase 2**：protocol 兼容层 + apikeys + router + scheduler + billing
 - **Phase 3**：panel Web 面板
+
+## 账号运维（2026-10-17 补齐，对齐 linguo）
+
+上游端点（以 linguo/hub 实际代码为准）：
+- 签到：`POST https://www.codebuddy.cn/v2/billing/meter/daily-checkin`（body `{}`）；
+  国际版走 `/billing/meter/daily-checkin`→404 fallback `/v2/...`；国际版无签到体系直接跳过
+- 余额：`POST https://www.codebuddy.cn/v2/billing/meter/get-user-resource`
+  （body `{PageNumber:1, PageSize:100, ProductCode:"p_tcaca", Status:[0,3], PackageEndTimeRangeBegin/End}`）；
+  信封 `{code,msg,data}`，code=10001 或 msg 含"已签到"视为幂等成功
+- 请求头：BillingHeaders（Bearer + `X-CodeBuddy-Request: 1` + Accept-Language + X-User-Id + X-Device-Token）
+
+面板接口：
+- `POST /panel/api/accounts/{uid}/checkin` 单号签到（签到+余额，结果记历史）
+- `POST /panel/api/accounts/{uid}/balance` 单号余额刷新
+- `POST /panel/api/checkin_all`（异步）/ `POST /panel/api/balance_all`（同步，2s 错峰）
+- `POST /panel/api/accounts/{uid}/disable|enable`、`DELETE /panel/api/accounts/{uid}`
+- 登录/导入成功后立即拉余额并推进 pool（免重启）

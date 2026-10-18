@@ -177,11 +177,14 @@ func main() {
 	orch := &orchestrator{inner: backend, router: rt, ledger: ledger}
 
 	// 定时任务：签到/保活/成长任务
-	sched, err := scheduler.New(func() []*types.Account { return accounts }, cfg.DataDir,
+	// 账号快照直接取池内 live 指针：面板新绑定的账号 AddAccount 进池后，
+	// 定时任务下一轮即能看到，无需重启。
+	sched, err := scheduler.New(func() []*types.Account { return p.All() }, cfg.DataDir,
 		func(f string, a ...any) { log.Printf("[scheduler] "+f, a...) })
 	if err != nil {
 		log.Fatalf("初始化 scheduler 失败: %v", err)
 	}
+	sched.SetBilling(upstream.NewBilling(), authStore.Save)
 	sched.RegisterBuiltinTasks()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
