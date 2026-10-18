@@ -201,6 +201,26 @@ func main() {
 
 	mux := http.NewServeMux()
 	protocol.RegisterRoutes(mux, orch)
+	// /v1/models：从模型目录缓存转换，带 group 分组元数据（discount/full_price）。
+	protocol.RegisterModelsRoute(mux, func() []protocol.ModelInfo {
+		entries, _, _, err := sched.ModelDirSnapshot()
+		if err != nil {
+			return nil
+		}
+		out := make([]protocol.ModelInfo, 0, len(entries))
+		for _, e := range entries {
+			group := "full_price"
+			if e.PromoFactor != nil || e.PromoLabel != "" {
+				group = "discount"
+			}
+			out = append(out, protocol.ModelInfo{
+				ID:         e.ID,
+				Group:      group,
+				PromoLabel: e.PromoLabel,
+			})
+		}
+		return out
+	})
 	pn := panel.New(p, sched, ledger, keyStore, authStore)
 	pn.SetAdminKey(cfg.AdminKey)
 	pn.SetConfig(cfg)

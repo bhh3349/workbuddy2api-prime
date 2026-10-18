@@ -54,6 +54,11 @@ func RegisterRoutes(mux *http.ServeMux, backend ChatBackend) {
 	mux.HandleFunc("/v1/responses", ResponsesHandler(backend))
 }
 
+// RegisterModelsRoute 挂载 GET /v1/models（模型列表 + 分组元数据）。
+func RegisterModelsRoute(mux *http.ServeMux, provider ModelProvider) {
+	mux.HandleFunc("/v1/models", ModelsHandler(provider))
+}
+
 // maxBody 限制入站 body 大小，防超大请求打爆内存。
 const maxBody = 8 << 20 // 8MB
 
