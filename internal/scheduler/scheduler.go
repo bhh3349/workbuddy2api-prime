@@ -17,7 +17,27 @@ import (
 	"time"
 
 	"workbuddy2api-prime/internal/types"
+	"workbuddy2api-prime/internal/upstream"
 )
+
+// SetBilling 注入签到/余额上游客户端与账号持久化函数。
+// 未注入时 CheckinAccount 返回占位结果（保持旧行为）。
+func (s *Scheduler) SetBilling(b *upstream.Billing, save func(*types.Account) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.billing = b
+	s.saveAcc = save
+}
+
+// RecordCheckin 把一次签到结果追加到历史落盘（供面板手动签到调用）。
+func (s *Scheduler) RecordCheckin(res types.CheckinResult) {
+	if s.store == nil {
+		return
+	}
+	if err := s.store.Append(res); err != nil {
+		s.logf("scheduler: 签到结果落盘失败（账号 %s）: %v", res.AccountID, err)
+	}
+}
 
 // TaskFunc 是单个定时任务的执行函数。ctx 在 Scheduler.Stop() 时取消，
 // 长耗时任务应监听 ctx.Done() 及时退出。
@@ -156,8 +176,11 @@ type Scheduler struct {
 	mu       sync.Mutex
 	tasks    map[string]*taskEntry
 	accounts func() []*types.Account // 账号快照提供者（由 main.go 注入，避免循环依赖）
-	store    *CheckinStore            // 签到结果落盘
+	store    *CheckinStore           // 签到结果落盘
 	logf     func(string, ...any)
+
+	billing *upstream.Billing          // 签到/余额上游客户端（SetBilling 注入，未注入时签到为占位）
+	saveAcc func(*types.Account) error // 账号变更持久化（SetBilling 注入）
 
 	running   bool
 	runCtx    context.Context

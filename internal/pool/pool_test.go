@@ -148,3 +148,45 @@ func TestReportBadRequestNoPenalty(t *testing.T) {
 		t.Fatal("400 不应惩罚账号")
 	}
 }
+
+func TestPoolAccountOps(t *testing.T) {
+	p := NewPool([]*types.Account{
+		{ID: "a1", UID: "a1", Region: "cn"},
+		{ID: "a2", UID: "a2", Region: "cn"},
+	}, DefaultPoolConfig())
+
+	if got := p.Get("a1"); got == nil || got.ID != "a1" {
+		t.Fatal("Get(a1) 失败")
+	}
+	if p.Get("nope") != nil {
+		t.Fatal("Get 不存在的应返回 nil")
+	}
+	if len(p.All()) != 2 {
+		t.Fatal("All 应返回 2 个")
+	}
+	// 停用后不再参与选号
+	if !p.SetDisabled("a1", true) {
+		t.Fatal("SetDisabled 失败")
+	}
+	if !p.Get("a1").Disabled {
+		t.Fatal("Disabled 未生效")
+	}
+	if p.SetDisabled("nope", true) {
+		t.Fatal("不存在的账号 SetDisabled 应返回 false")
+	}
+	// 启用恢复
+	if !p.SetDisabled("a1", false) || p.Get("a1").Disabled {
+		t.Fatal("启用失败")
+	}
+	// 删除
+	removed := p.Remove("a2")
+	if removed == nil || removed.ID != "a2" {
+		t.Fatal("Remove 失败")
+	}
+	if p.Get("a2") != nil || p.Len() != 1 {
+		t.Fatal("Remove 后仍能查到")
+	}
+	if p.Remove("a2") != nil {
+		t.Fatal("重复 Remove 应返回 nil")
+	}
+}

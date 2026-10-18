@@ -2,11 +2,15 @@ package scheduler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"workbuddy2api-prime/internal/auth"
 	"workbuddy2api-prime/internal/types"
+	"workbuddy2api-prime/internal/upstream"
 )
 
 // 内置任务名。
@@ -50,22 +54,76 @@ func (s *Scheduler) runCheckin(ctx context.Context) error {
 	return nil
 }
 
-// checkinOne 对单个账号执行签到。
+// checkinOne 对单个账号执行签到（定时任务内部用），语义与 CheckinAccount 一致。
+func (s *Scheduler) checkinOne(ctx context.Context, acc *types.Account) types.CheckinResult {
+	return s.CheckinAccount(ctx, acc)
+}
+
+// CheckinAccount 对单个账号执行签到并刷新余额（面板手动签到复用同一逻辑）。
 //
-// TODO: 接入真实签到接口。参考实现：
-//   - linguo:  ~/workspace/workbuddy2api-analysis/repos/workbuddy2api-panel/internal/panel/taskcenter.go
-//     （签到 + 余额查询；余额恢复后应解冻 pool 中的冷却账号）
-//   - hub:    ~/workspace/workbuddy2api-analysis/repos/workbuddy2api-hub/wb_accounts.py::Account.checkin()
-//     （国内版签到；国际版对应 daily_chat()，按日幂等）
-//
-// 注意：global（国际版）账号无签到体系，应跳过（参考 linguo：global 跳过签到/成长）。
-func (s *Scheduler) checkinOne(_ context.Context, acc *types.Account) types.CheckinResult {
-	return types.CheckinResult{
-		Time:      time.Now(),
-		AccountID: acc.ID,
-		OK:        false,
-		Detail:    "TODO: 上游签到接口未实现",
+// 流程（对齐 linguo panel accountCheckin）：
+//  1. 国际版/企业号无签到体系 → 跳过签到，只刷新余额；
+//  2. 调上游 daily-checkin，"今日已签到"视为幂等成功；
+//  3. 无论签到成败都查一次余额并写回账号（CreditTotal/CreditExpiresAt），
+//     已签到等业务错误不阻塞余额刷新。
+func (s *Scheduler) CheckinAccount(_ context.Context, acc *types.Account) types.CheckinResult {
+	res := types.CheckinResult{Time: time.Now(), AccountID: acc.ID}
+	if acc.Disabled {
+		res.Detail = "账号已停用，跳过"
+		return res
 	}
+	s.mu.Lock()
+	billing, saveAcc := s.billing, s.saveAcc
+	s.mu.Unlock()
+	if billing == nil {
+		res.Detail = "签到客户端未初始化"
+		return res
+	}
+
+	checkinMsg := ""
+	switch err := billing.DailyCheckin(acc); {
+	case err == nil:
+		checkinMsg = "签到成功"
+	case errors.Is(err, upstream.ErrAlreadyCheckedIn):
+		checkinMsg = "今日已签到"
+	case errors.Is(err, upstream.ErrCheckinUnsupported):
+		checkinMsg = "无签到体系（仅刷新余额）"
+	default:
+		checkinMsg = "签到失败: " + err.Error()
+	}
+
+	// 余额刷新：签到业务错误不阻塞。
+	remain, _, earliest, berr := billing.FetchBalance(acc)
+	if berr != nil {
+		res.Detail = joinDetail(checkinMsg, "余额刷新失败: "+berr.Error())
+		return res
+	}
+	acc.CreditTotal = float64(remain)
+	if !earliest.IsZero() {
+		acc.CreditExpiresAt = earliest
+	}
+	acc.UpdatedAt = time.Now()
+	if saveAcc != nil {
+		if err := saveAcc(acc); err != nil {
+			s.logf("scheduler: 账号 %s 余额落盘失败: %v", acc.ID, err)
+		}
+	}
+	res.OK = true // 余额刷新成功即记成功（余额为准）；签到失败原因保留在明细里
+	res.Detail = joinDetail(checkinMsg, fmt.Sprintf("剩余额度 %.0f", float64(remain)))
+	return res
+}
+
+// joinDetail 拼接签到与余额两段明细。
+func joinDetail(a, b string) string {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" {
+		return b
+	}
+	if b == "" {
+		return a
+	}
+	return a + "；" + b
 }
 
 // runKeepalive 集中刷新 token。

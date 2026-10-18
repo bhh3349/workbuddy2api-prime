@@ -88,14 +88,14 @@ func (c PoolConfig) withDefaults() PoolConfig {
 // accountState 是单个账号的运行态（不落盘，内存态）。
 type accountState struct {
 	acc           *types.Account
-	fails         int                    // 连续上游失败计数（ReportUpstreamError）
-	softStreak    int                    // 连续被限流计数（指数退避用）
-	cooldownUntil time.Time              // 账号级冷却截止时间
-	degradeUntil  time.Time              // 连败降级截止时间
-	modelCooldown map[string]time.Time   // 模型级独立冷却：model -> 截止时间
-	emaCost       float64                // EMA 成本账本（单次调用平均消耗积分）
-	emaSamples    int                    // EMA 观测次数
-	lastPick      time.Time              // 上次被选中时间
+	fails         int                  // 连续上游失败计数（ReportUpstreamError）
+	softStreak    int                  // 连续被限流计数（指数退避用）
+	cooldownUntil time.Time            // 账号级冷却截止时间
+	degradeUntil  time.Time            // 连败降级截止时间
+	modelCooldown map[string]time.Time // 模型级独立冷却：model -> 截止时间
+	emaCost       float64              // EMA 成本账本（单次调用平均消耗积分）
+	emaSamples    int                  // EMA 观测次数
+	lastPick      time.Time            // 上次被选中时间
 }
 
 // sessionBinding 记录会话键到上次成功账号的绑定（滚动续期）。
@@ -465,4 +465,60 @@ func (p *Pool) Snapshot() []AccountStat {
 		})
 	}
 	return out
+}
+
+// Get 按账号 ID 返回池内账号指针（池直接引用的 live 对象，调用方可修改运行态字段）。
+// 不存在时返回 nil。
+func (p *Pool) Get(id string) *types.Account {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if st, ok := p.byID[id]; ok {
+		return st.acc
+	}
+	return nil
+}
+
+// All 返回池内全部账号指针（live 对象，保持插入顺序）。
+// 调用方只应读或修改 Account 字段，不得改动返回切片本身。
+func (p *Pool) All() []*types.Account {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]*types.Account, 0, len(p.accounts))
+	for _, st := range p.accounts {
+		out = append(out, st.acc)
+	}
+	return out
+}
+
+// SetDisabled 设置账号停用/启用状态（停用后不再参与选号，但照常参与签到等维护任务）。
+// 不存在时返回 false。调用方负责持久化（auth.Save）。
+func (p *Pool) SetDisabled(id string, disabled bool) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st, ok := p.byID[id]
+	if !ok {
+		return false
+	}
+	st.acc.Disabled = disabled
+	return true
+}
+
+// Remove 把账号移出池子，返回被移除的账号（不存在时返回 nil）。
+// 调用方负责删除凭证文件（auth.Delete）。
+func (p *Pool) Remove(id string) *types.Account {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st, ok := p.byID[id]
+	if !ok {
+		return nil
+	}
+	delete(p.byID, id)
+	for i, s := range p.accounts {
+		if s == st {
+			p.accounts = append(p.accounts[:i], p.accounts[i+1:]...)
+			break
+		}
+	}
+	p.dropSessionsLocked(id)
+	return st.acc
 }
