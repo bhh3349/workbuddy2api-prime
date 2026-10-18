@@ -203,20 +203,39 @@ func main() {
 	protocol.RegisterRoutes(mux, orch)
 	// /v1/models：从模型目录缓存转换，带 group 分组元数据（discount/full_price）。
 	protocol.RegisterModelsRoute(mux, func() []protocol.ModelInfo {
-		entries, _, _, err := sched.ModelDirSnapshot()
+		entries, promos, _, err := sched.ModelDirSnapshot()
 		if err != nil {
 			return nil
+		}
+		// 优惠不在条目里（抓取层故意不写死），用 promotions 规则实时判定——
+		// 与面板 mdApplyPromos 同逻辑：promo 启用 + 时间窗口生效 + 模型 ID 命中。
+		now := time.Now()
+		activePromo := map[string]*upstream.ModelPromotion{} // entryID -> promo
+		for i := range promos {
+			p := &promos[i]
+			if !p.Enabled || !upstream.PromoActiveAt(p, now) {
+				continue
+			}
+			for _, mid := range p.ModelIDs {
+				if _, ok := activePromo[mid]; !ok {
+					activePromo[mid] = p
+				}
+			}
 		}
 		out := make([]protocol.ModelInfo, 0, len(entries))
 		for _, e := range entries {
 			group := "full_price"
-			if e.PromoFactor != nil || e.PromoLabel != "" {
+			label := ""
+			if p, ok := activePromo[e.ID]; ok {
 				group = "discount"
+				if p.Badge != nil {
+					label = p.Badge.Label
+				}
 			}
 			out = append(out, protocol.ModelInfo{
 				ID:         e.ID,
 				Group:      group,
-				PromoLabel: e.PromoLabel,
+				PromoLabel: label,
 			})
 		}
 		return out
